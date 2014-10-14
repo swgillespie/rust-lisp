@@ -1,0 +1,5 @@
+[package]
+
+name = "scheme"
+version = "0.0.1"
+authors = ["Sean Gillespie <sean.william.g@gmail.com>"]
