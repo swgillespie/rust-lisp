@@ -15,47 +15,7 @@ pub enum Sexp {
     Nil,
 }
 
-impl Sexp {
-    #[allow(dead_code)]
-    pub fn pretty_print(&self) -> String {
-        match *self {
-            Int(v) => v.to_string(),
-            Float(v) => v.to_string(),
-            Str(ref v) => format!("\"{}\"", v),
-            Symbol(ref v) => v.clone(),
-            Cons(ref car, ref cdr) => {
-                let (s_car, s_cdr) = self.print_cons(&**car, &**cdr);
-                format!("({} {})", s_car, s_cdr)
-            },
-            Nil => "".to_string(),
-            Boolean(v) => if v {
-                "#t".to_string()
-            } else {
-                "#f".to_string()
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn print_cons(&self, car: &Sexp, cdr: &Sexp) -> (String, String) {
-        let car_str = car.pretty_print();
-        let cdr_str = match *cdr {
-            Cons(ref c_car, ref c_cdr) => {
-                let (s_car, s_cdr) = self.print_cons(&**c_car, &**c_cdr);
-                if s_cdr.len() == 0 {
-                    format!("{}", s_car)
-                } else {
-                    format!("{} {}", s_car, s_cdr)
-                }
-            }
-            Nil => "".to_string(),
-            _ => format!(". {}", cdr.pretty_print())
-        };
-        (car_str, cdr_str)
-    }
-}
-
-pub type ReadResult = Result<Sexp, &'static str>;
+pub type ReadResult = Result<Sexp, String>;
 
 pub struct SexpReader {
     unget_stack: Vec<char>
@@ -72,13 +32,15 @@ impl SexpReader {
         match self.get_char(reader, true) {
             Some(c) => match c {
                 '\'' => self.parse_quoted_sexp(reader),
+                ','  => self.parse_unquoted_sexp(reader),
+                '`'  => self.parse_quasiquoted_sexp(reader),
                 '('  => self.parse_list(reader),
                 _    => {
                     self.unget_char(c);
                     self.parse_atom(reader)
                 }
             },
-            None => Err("EOF while scanning")
+            None => Ok(Nil)
         }
     }
 
@@ -90,15 +52,26 @@ impl SexpReader {
 
     fn parse_quoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
         let cdr = try!(self.parse(reader));
-        let new_sexp = Cons(box Symbol("quote".to_string()), box Cons(box cdr, box Nil));
+        let new_sexp = Cons(box Symbol("quote".to_string()), box cdr);
+        Ok(new_sexp)
+    }
+
+    fn parse_unquoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+        let cdr = try!(self.parse(reader));
+        let new_sexp = Cons(box Symbol("unquote".to_string()), box Cons(box cdr, box Nil));
+        Ok(new_sexp)
+    }
+
+    fn parse_quasiquoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+        let cdr = try!(self.parse(reader));
+        let new_sexp = Cons(box Symbol("quasiquote".to_string()), box Cons(box cdr, box Nil));
         Ok(new_sexp)
     }
 
     fn parse_list<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
-        println!("parsing list");
         let car = match self.parse(reader) {
             Ok(value) => value,
-            Err(_) => return Ok(Cons(box Nil, box Nil))
+            Err(e) => return Err(e)
         };
 
         let cdr = match self.peek_char(reader, true) {
@@ -109,19 +82,17 @@ impl SexpReader {
             Some(_) => {
                 try!(self.parse_list_tail(reader))
             },
-            None => return Err("Unexpected EOF, expected . or atom")
+            None => return Err("Unexpected EOF, expected ., atom, or )".to_string())
         };
 
-        println!("about to parse close paren");
         match self.get_char(reader, true) {
             Some(e) if e == ')' => Ok(Cons(box car, box cdr)),
-            Some(_) => Err("Expected )"),
-            None => Err("Unexpected EOF, expected )")
+            Some(_) => Err("Expected )".to_string()),
+            None => Err("Unexpected EOF, expected )".to_string())
         }
     }
 
     fn parse_list_tail<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
-        println!("parsing list tail");
         let car = match self.parse(reader) {
             Ok(value) => value,
             Err(_) => return Ok(Nil)
@@ -142,7 +113,7 @@ impl SexpReader {
                 self.unget_char(e);
                 try!(self.parse_list_tail(reader))
             },
-            None => return Err("Unexpected EOF, expected . or atom")
+            None => return Err("Unexpected EOF, expected . or atom".to_string())
         };
 
         Ok(Cons(box car, box cdr))
@@ -156,7 +127,7 @@ impl SexpReader {
                 '#' => self.parse_boolean(reader),
                 _ => self.parse_symbol(reader)
             },
-            None => Err("Unexpected EOF while scanning atom")
+            None => Err("Unexpected EOF while scanning atom".to_string())
         }
     }
 
@@ -166,9 +137,9 @@ impl SexpReader {
             Some(e) => match e {
                 't' => Ok(Boolean(true)),
                 'f' => Ok(Boolean(false)),
-                _ => Err("Unknown boolean literal")
+                _ => Err(format!("Unknown boolean literal, got {}", e))
             },
-            None => Err("Unexpected EOF while scanning boolean literal")
+            None => Err("Unexpected EOF while scanning boolean literal".to_string())
         }
     }
 
@@ -181,12 +152,12 @@ impl SexpReader {
                     '\"' => break,
                     '\\' => match self.parse_escape_char(reader) {
                         Some(v) => string.push(v),
-                        None => return Err("Unexpected escape sequence")
+                        None => return Err(format!("Unexpected escape sequence, got {}", e))
                     },
-                    '\n' => return Err("Unescaped newlines are not allowed in string literals"),
+                    '\n' => return Err("Unescaped newlines are not allowed in string literals".to_string()),
                     _ => string.push(e)
                 },
-                None => return Err("Unexpected EOF while scanning string literal")
+                None => return Err("Unexpected EOF while scanning string literal".to_string())
             }
         }
         Ok(Str(string))
@@ -212,7 +183,7 @@ impl SexpReader {
         let mut string = "".to_string();
         loop {
             match self.get_char(reader, false) {
-                Some(e) if e == '.' && is_double => return Err("More than one . in numeric literal"),
+                Some(e) if e == '.' && is_double => return Err("More than one . in numeric literal".to_string()),
                 Some(e) if e == '.' => {
                     is_double = true;
                     string.push(e);
@@ -235,10 +206,10 @@ impl SexpReader {
     fn parse_symbol<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
         let mut symbol = match self.peek_char(reader, false) {
             Some(e) if self.is_valid_for_identifier(e) => String::from_char(1, self.get_char(reader, false).unwrap()),
-            Some(_) => {
-                return Err("Unexpected character")
+            Some(e) => {
+                return Err(format!("Unexpected character: got {}, expected an atom", e))
             },
-            None => return Err("Unexpected EOF")
+            None => return Err("Unexpected EOF".to_string())
         };
         loop {
             match self.get_char(reader, false) {
@@ -250,7 +221,10 @@ impl SexpReader {
                 None => break
             }
         }
-        Ok(Symbol(symbol))
+        match symbol.as_slice() {
+            "nil" => Ok(Nil),
+            _ => Ok(Symbol(symbol))
+        }
     }
 
     fn is_valid_for_identifier(&self, c: char) -> bool {
