@@ -11,10 +11,13 @@ mod intrinsics;
 
 #[allow(dead_code)]
 fn main() {
+    println!("Rust Lisp interpreter, by Sean Gillespie 2014");
+    println!("Licensed under the MIT license");
+    println!("Control+D to exit");
     let mut stdin = stdio::stdin();
     let mut interpreter = Interpreter::new();
     loop {
-        print!("scheme> ");
+        print!("lisp> ");
         if let Ok(line) = stdin.read_line() {
             process_line(line, &mut interpreter);
         } else {
