@@ -13,7 +13,6 @@ mod intrinsics;
 fn main() {
     let mut stdin = stdio::stdin();
     let mut interpreter = Interpreter::new();
-    load_intrinsics(&mut interpreter);
     loop {
         print!("scheme> ");
         if let Ok(line) = stdin.read_line() {
@@ -25,11 +24,6 @@ fn main() {
     }
 }
 
-fn load_intrinsics(interpreter: &mut Interpreter) {
-    interpreter.expose_external_function("+".to_string(), intrinsics::add);
-    interpreter.expose_external_function("-".to_string(), intrinsics::sub);
-    interpreter.expose_external_function("*".to_string(), intrinsics::mul);
-}
 
 fn process_line(input: String, interpreter: &mut Interpreter) {
     let mut reader = SexpReader::new();

@@ -4,7 +4,7 @@ use std::io::{BufReader, BufferedReader, Reader};
 // An S-expression is composed of either an integer, a float, a string, a symbol,
 // or a list. A list has a pointer to the head (car) of its values, and a pointer
 // to the rest of the list (cdr).
-#[deriving(Show)]
+#[deriving(Show, Clone)]
 pub enum Sexp {
     Int(i32),
     Float(f32),
@@ -15,6 +15,8 @@ pub enum Sexp {
     Nil,
 }
 
+// A ReadResult is the output of the reader. It is either an S-expression upon
+// success or a String error message upon failure.
 pub type ReadResult = Result<Sexp, String>;
 
 pub struct SexpReader {
@@ -27,7 +29,9 @@ impl SexpReader {
             unget_stack: vec![]
         }
     }
-    
+
+    // Top-level parse of an S-expression. The empty string is parsed as
+    // a Nil.
     pub fn parse<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
         match self.get_char(reader, true) {
             Some(c) => match c {
@@ -44,6 +48,7 @@ impl SexpReader {
         }
     }
 
+    // Wrapper around parse() that allows for the parsing of strings.
     pub fn parse_str(&mut self, string: &str) -> ReadResult {
         let reader = BufReader::new(string.as_bytes());
         let mut buf_reader = BufferedReader::new(reader);
@@ -341,7 +346,7 @@ mod tests {
         assert!(result.is_ok(), "parse failed: {}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(s), box Cons(box Int(i), box Nil)) => {
+            Cons(box Symbol(s), box Int(i)) => {
                 assert_eq!(s, "quote".to_string());
                 assert_eq!(i, 42);
             }
@@ -356,7 +361,7 @@ mod tests {
         assert!(result.is_ok(), "parse failed: {}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(s), box Cons(box Cons(box Int(a), box Cons(box Int(b), box Cons(box Int(c), box Nil))), box Nil)) => {
+            Cons(box Symbol(s), box Cons(box Int(a), box Cons(box Int(b), box Cons(box Int(c), box Nil)))) => {
                 assert_eq!(s, "quote".to_string());
                 assert_eq!(a, 1);
                 assert_eq!(b, 2);
