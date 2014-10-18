@@ -1,4 +1,4 @@
-# rust-lisp #
+# rust-lisp [![Build Status](https://travis-ci.org/swgillespie/rust-lisp.svg?branch=master)](https://travis-ci.org/swgillespie/rust-lisp/) # 
 
 Rust is my new favorite language and I've really wanted to use it in a project.
 I like languages so I wrote a minimal Lisp-like interpreter. It doesn't do a whole lot now
