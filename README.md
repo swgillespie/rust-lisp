@@ -1,4 +1,4 @@
-# rust-lisp [![Build Status](https://travis-ci.org/swgillespie/rust-lisp.svg?branch=master)](https://travis-ci.org/swgillespie/rust-lisp/) # 
+# rust-lisp [![Build Status](https://travis-ci.org/swgillespie/rust-lisp.svg?branch=master)](https://travis-ci.org/swgillespie/rust-lisp/) 
 
 Rust is my new favorite language and I've really wanted to use it in a project.
 I like languages so I wrote a minimal Lisp-like interpreter. It doesn't do a whole lot now
@@ -17,7 +17,7 @@ cargo run
 
 ```cargo test``` will run the tests.
 
-## Currently Supported ##
+## Currently Supported
 * Basic arithmetic (+, -, *)
 * `car` and `cdr`
 * Quoting and unquoting (but not quasiquoting... yet)
@@ -25,7 +25,7 @@ cargo run
 * Defining and calling functions written in Rust
 * `if`, `define`, `quote`, `defun` fundamental forms
 
-## TODO list ##
+## TODO list
 
 - [ ] `lambda` form and closures
 - [ ] `quasiquote` form
