@@ -8,6 +8,7 @@ use interpreter::Interpreter;
 mod reader;
 mod interpreter;
 mod intrinsics;
+mod environment;
 
 #[allow(dead_code)]
 fn main() {

@@ -1,10 +1,9 @@
 use std::fmt::{Formatter, FormatError, Show};
 use std::rc::Rc;
-use std::collections::HashMap;
-use std::collections::hashmap::{Vacant, Occupied};
 
 use reader;
 use intrinsics;
+use environment;
 
 // The LispValue enum is the type of all Lisp values at runtime. These are
 // the same as the S-expression representation, except that functions can also
@@ -112,13 +111,13 @@ impl Show for Function {
 pub type EvalResult = Result<Rc<LispValue>, String>;
 
 pub struct Interpreter {
-    environment: HashMap<String, Rc<LispValue>>
+    environment: environment::Environment
 }
 
 impl Interpreter {
     pub fn new() -> Interpreter {
         let mut interpreter = Interpreter {
-            environment: HashMap::new()
+            environment: environment::Environment::new()
         };
         interpreter.load_intrinsics();
         interpreter
@@ -148,7 +147,7 @@ impl Interpreter {
 
     pub fn expose_external_function(&mut self, name: String, func: fn(Vec<Rc<LispValue>>) -> EvalResult) {
         let wrapped_func = Func(ExternalFunction(name.clone(), func));
-        self.environment.insert(name.clone(), Rc::new(wrapped_func));
+        self.environment.put(name.clone(), Rc::new(wrapped_func));
     }
 
     fn is_intrinsic(&self, name: &String) -> bool {
@@ -160,6 +159,8 @@ impl Interpreter {
                 | "define"
                 | "quote"
                 | "unquote"
+                | "and"
+                | "or"
                 | "quasiquote" => true,
             _ => false
         }
@@ -174,10 +175,52 @@ impl Interpreter {
             "define" => self.eval_define(sexp),
             "quasiquote" => self.eval_quasiquote(sexp),
             "defun" => self.eval_defun(sexp),
+            "and" => self.eval_and(sexp),
+            "or" => self.eval_or(sexp),
             "defmacro" => Err("not supported yet".to_string()),
             _ => unreachable!()
         }
     }
+
+    fn eval_and(&mut self, sexp: &reader::Sexp) -> EvalResult {
+        match *sexp {
+            reader::Cons(ref car, ref cdr) => match self.eval(&**car) {
+                Ok(val) => match val.deref() {
+                    &Bool(false) => Ok(val.clone()),
+                    _ => self.eval_and(&**cdr)
+                },
+                Err(e) => Err(e)
+            },
+            ref e => match self.eval(e) {
+                Ok(val) => match val.deref() {
+                    &Bool(false) => Ok(val.clone()),
+                    _ => Ok(Rc::new(Bool(true)))
+                },
+                Err(e) => Err(e)
+            }
+        }
+    }
+
+    fn eval_or(&mut self, sexp: &reader::Sexp) -> EvalResult {
+        match *sexp {
+            reader::Cons(ref car, ref cdr) => match self.eval(&**car) {
+                Ok(val) => match val.deref() {
+                    &Bool(true) => Ok(val.clone()),
+                    _ => self.eval_or(&**cdr)
+                },
+                Err(e) => Err(e)
+            },
+            ref e => match self.eval(e) {
+                Ok(val) => match val.deref() {
+                    &Bool(false) => Ok(val.clone()),
+                    &Nil => Ok(Rc::new(Bool(false))),
+                    _ => Ok(Rc::new(Bool(true)))
+                },
+                Err(e) => Err(e)
+            }
+        }
+    }
+
 
     fn eval_quote(&mut self, sexp: &reader::Sexp) -> EvalResult {
         fn sexp_to_lvalue(s: &reader::Sexp) -> Rc<LispValue> {
@@ -230,12 +273,12 @@ impl Interpreter {
         match *sexp {
             reader::Cons(box reader::Symbol(ref sym), box reader::Cons(ref exp, box reader::Nil)) => {
                 let value = try!(self.eval(&**exp));
-                self.env_put(sym.clone(), value);
+                self.environment.put(sym.clone(), value);
                 Ok(Rc::new(Nil))
             }
             reader::Cons(box reader::Symbol(ref sym), ref exp) => {
                 let value = try!(self.eval(&**exp));
-                self.env_put(sym.clone(), value);
+                self.environment.put(sym.clone(), value);
                 Ok(Rc::new(Nil))
             }
             reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
@@ -252,7 +295,7 @@ impl Interpreter {
         match *sexp {
             reader::Cons(box reader::Symbol(ref sym), box reader::Cons(ref parameters, box reader::Cons(ref body, box reader::Nil))) => {
                 let func = Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone())));
-                self.env_put(sym.clone(), Rc::new(func));
+                self.environment.put(sym.clone(), Rc::new(func));
                 Ok(Rc::new(Nil))
             }
             reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
@@ -261,7 +304,7 @@ impl Interpreter {
     }
 
     fn eval_symbol(&mut self, sym: String) -> EvalResult {
-        match self.env_get(sym.clone()) {
+        match self.environment.get(sym.clone()) {
             Some(value) => Ok(value),
             None => Err(format!("Unbound symbol: {}", sym))
         }
@@ -288,13 +331,12 @@ impl Interpreter {
         if params.len() != list.len() {
             return Err("Incorrect number of parameters".to_string());
         }
+        self.environment.enter_scope();
         for (value, binding) in params.iter().zip(list.iter()) {
-            self.env_put(binding.clone(), value.clone());
+            self.environment.put(binding.clone(), value.clone());
         }
         let result = self.eval(body.deref());
-        for binding in list.iter() {
-            self.env_delete(binding);
-        }
+        self.environment.exit_scope();
         result
     }
 
@@ -354,31 +396,19 @@ impl Interpreter {
             _ => unreachable!()
         }
     }
-
-    pub fn env_get(&mut self, key: String) -> Option<Rc<LispValue>> {
-        match self.environment.entry(key.clone()) {
-            Vacant(_) => None,
-            Occupied(entry) => Some(entry.get().clone())
-        }
-    }
-
-    pub fn env_put(&mut self, key: String, value: Rc<LispValue>) {
-        self.environment.insert(key, value);
-    }
-
-    pub fn env_delete(&mut self, key: &String) {
-        self.environment.remove(key);
-    }
 }
 
 #[cfg(test)]
-mod test {
-    use std::rc::Rc;
+mod tests {
     use super::*;
     use super::super::reader;
 
     fn evaluate(input: &'static str) -> EvalResult {
         let mut interpreter = Interpreter::new();
+        evaluate_with_context(input, &mut interpreter)
+    }
+
+    fn evaluate_with_context(input: &'static str, interpreter: &mut Interpreter) -> EvalResult {
         let mut reader = reader::SexpReader::new();
         match reader.parse_str(input) {
             Ok(e) => match interpreter.eval(&e) {
@@ -464,27 +494,134 @@ mod test {
         }
     }
 
-    /*
-    #[bench]
-    fn factorial_bench(b: &mut Bencher) {
-        let mut interpreter = Interpreter::new();
-        let mut reader = reader::SexpReader::new();
-        match reader.parse_str("(defun fact (n) (if (= n 0) 1 (* n (fact (- n 1)))))") {
-            Ok(e) => match interpreter.eval(&e) {
-                Ok(val) => (),
-                Err(e) => fail!("{}", e)
-            },
-            Err(e) => fail!("{}", e)
-        };
-        b.iter(|| {
-            match reader.parse_str("(fact 15)") {
-                Ok(e) => match interpreter.eval(&e) {
-                    Ok(val) => assert_eq!(val, Int(130767436800)),
-                    Err(e) => fail!("{}", e)
-                },
-                Err(e) => fail("{}", e)
+    #[test]
+    fn test_if_true() {
+        if let Ok(val) = evaluate("(if #t 1 2)") {
+            match val.deref() {
+                &Int(a) => assert_eq!(a, 1),
+                e => fail!("Unexpected: {}", e)
             }
-        })
-    }*/
-    
+        } else {
+            fail!("Unexpected error")
+        }
+        
+    }
+
+    #[test]
+    fn test_if_false() {
+        if let Ok(val) = evaluate("(if #f 1 2)") {
+            match val.deref() {
+                &Int(a) => assert_eq!(a, 2),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_if_true_no_false_branch() {
+        if let Ok(val) = evaluate("(if #t 1)") {
+            match val.deref() {
+                &Int(a) => assert_eq!(a, 1),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_if_false_no_false_branch() {
+        if let Ok(val) = evaluate("(if #f 1)") {
+            match val.deref() {
+                &Nil => (),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_basic_defun() {
+        let mut interpreter = Interpreter::new();
+        if let Ok(_) = evaluate_with_context("(defun square (x) (* x x))", &mut interpreter) {
+            if let Ok(val) = evaluate_with_context("(square 5)", &mut interpreter) {
+                match val.deref() {
+                    &Int(v) => assert_eq!(v, 25),
+                    e => fail!("Unexpected: {}", e)
+                }
+            } else {
+                fail!("Unexpected error");
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_recursive_defun() {
+        let mut interpreter = Interpreter::new();
+        if let Ok(_) = evaluate_with_context("(defun fact (n) (if (= n 0) 1 (* n (fact (- n 1)))))", &mut interpreter) {
+            if let Ok(val) = evaluate_with_context("(fact 5)", &mut interpreter) {
+                match val.deref() {
+                    &Int(v) => assert_eq!(v, 120),
+                    e => fail!("Unexpected: {}", e)
+                }
+            } else {
+                fail!("Unexpected error");
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_and_short_circuit() {
+        if let Ok(val) = evaluate("(and #f asdfjsldlf)") {
+            match val.deref() {
+                &Bool(b) => assert!(!b),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_or_short_circuit() {
+        if let Ok(val) = evaluate("(or #t asdfjsldlf)") {
+            match val.deref() {
+                &Bool(b) => assert!(b),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_or() {
+        if let Ok(val) = evaluate("(or #f #f)") {
+            match val.deref() {
+                &Bool(b) => assert!(!b),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_and() {
+        if let Ok(val) = evaluate("(and #t #t)") {
+            match val.deref() {
+                &Bool(b) => assert!(b),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
 }
