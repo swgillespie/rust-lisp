@@ -1,5 +1,6 @@
 use std::fmt::{Formatter, FormatError, Show};
 use std::rc::Rc;
+use std::collections::HashSet;
 
 use reader;
 use intrinsics;
@@ -81,7 +82,7 @@ impl LispValue {
 // Macros aren't supported yet.
 #[allow(dead_code)] // macros aren't used yet
 pub enum Function {
-    InternalFunction(Rc<reader::Sexp>, Rc<reader::Sexp>),
+    InternalFunction(Rc<reader::Sexp>, Rc<reader::Sexp>, Vec<(String, Option<Rc<LispValue>>)>),
     ExternalFunction(String, fn(Vec<Rc<LispValue>>) -> EvalResult),
     Macro(Rc<reader::Sexp>, Rc<reader::Sexp>),
 }
@@ -101,7 +102,7 @@ impl PartialEq for Function {
 impl Show for Function {
     fn fmt (&self, fmt: &mut Formatter) -> Result<(), FormatError> {
         match *self {
-            InternalFunction(_, _) => write!(fmt, "<internal function>"),
+            InternalFunction(_, _, _) => write!(fmt, "<internal function>"),
             ExternalFunction(_, _) => write!(fmt, "<external function>"),
             Macro(_, _) => write!(fmt, "<macro>")
         }
@@ -273,12 +274,12 @@ impl Interpreter {
         match *sexp {
             reader::Cons(box reader::Symbol(ref sym), box reader::Cons(ref exp, box reader::Nil)) => {
                 let value = try!(self.eval(&**exp));
-                self.environment.put(sym.clone(), value);
+                self.environment.put_global(sym.clone(), value);
                 Ok(Rc::new(Nil))
             }
             reader::Cons(box reader::Symbol(ref sym), ref exp) => {
                 let value = try!(self.eval(&**exp));
-                self.environment.put(sym.clone(), value);
+                self.environment.put_global(sym.clone(), value);
                 Ok(Rc::new(Nil))
             }
             reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
@@ -294,8 +295,10 @@ impl Interpreter {
     fn eval_defun(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
             reader::Cons(box reader::Symbol(ref sym), box reader::Cons(ref parameters, box reader::Cons(ref body, box reader::Nil))) => {
-                let func = Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone())));
-                self.environment.put(sym.clone(), Rc::new(func));
+                let free_vars = self.get_free_variables(self.eval_list_as_parameter_list(&**parameters), &**body);
+                let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
+                let func = Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone()), closure));
+                self.environment.put_global(sym.clone(), Rc::new(func));
                 Ok(Rc::new(Nil))
             }
             reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
@@ -314,7 +317,7 @@ impl Interpreter {
         let sym_val = try!(self.eval(car));
         match *sym_val {
             Func(ref f) => match *f {
-                InternalFunction(ref parameters, ref body) => self.eval_internal_function(cdr, parameters.clone(), body.clone()),
+                InternalFunction(ref parameters, ref body, ref closure) => self.eval_internal_function(cdr, parameters.clone(), body.clone(), closure),
                 ExternalFunction(_, func) => self.eval_external_function(cdr, func),
                 Macro(ref parameters, ref body) => self.eval_macro(cdr, parameters.clone(), body.clone())
             },
@@ -325,7 +328,8 @@ impl Interpreter {
     fn eval_internal_function(&mut self,
                               actual_params: &reader::Sexp,
                               formal_params: Rc<reader::Sexp>,
-                              body: Rc<reader::Sexp>) -> EvalResult {
+                              body: Rc<reader::Sexp>,
+                              closure: &Vec<(String, Option<Rc<LispValue>>)>) -> EvalResult {
         let params = try!(self.eval_list_as_parameters(actual_params));
         let list = self.eval_list_as_parameter_list(formal_params.deref());
         if params.len() != list.len() {
@@ -334,6 +338,15 @@ impl Interpreter {
         self.environment.enter_scope();
         for (value, binding) in params.iter().zip(list.iter()) {
             self.environment.put(binding.clone(), value.clone());
+        }
+        for &(ref binding, ref value) in closure.iter() {
+            match *value {
+                Some(ref v) => self.environment.put(binding.clone(), v.clone()),
+                None => match self.environment.get(binding.clone()) {
+                    Some(ref v) => self.environment.put(binding.clone(), v.clone()),
+                    None => return Err(format!("unbound variable: {}", binding.clone()))
+                }
+            }
         }
         let result = self.eval(body.deref());
         self.environment.exit_scope();
@@ -385,7 +398,7 @@ impl Interpreter {
     // The function is similar to eval_list_as_parameters, but it just gets the names
     // of all of the symbols in the linked list instead of evaluating them. This
     // is also used for evaluating parameters for a function call.
-    fn eval_list_as_parameter_list(&mut self, params: &reader::Sexp) -> Vec<String> {
+    fn eval_list_as_parameter_list(&self, params: &reader::Sexp) -> Vec<String> {
         match *params {
             reader::Cons(box reader::Symbol(ref s), ref cdr) => {
                 let mut result = vec![s.clone()];
@@ -396,10 +409,36 @@ impl Interpreter {
             _ => unreachable!()
         }
     }
+
+    fn get_free_variables(&self, variables: Vec<String>, body: &reader::Sexp) -> Vec<String> {
+        let parameter_set : HashSet<String> = variables.iter().map(|&ref x| x.clone()).collect();
+        let variable_set : HashSet<String> = self.get_variables(body);
+        variable_set.difference(&parameter_set).map(|&ref x| x.clone()).collect()
+    }
+
+    fn get_variables(&self, body: &reader::Sexp) -> HashSet<String> {
+        match *body {
+            reader::Symbol(ref s) if !self.is_intrinsic(s) => {
+                let mut set = HashSet::new();
+                set.insert(s.clone());
+                set
+            },
+            reader::Cons(ref car, ref cdr) => {
+                let free_car = self.get_variables(&**car);
+                let free_cdr = self.get_variables(&**cdr);
+                free_car.union(&free_cdr).map(|&ref x| x.clone()).collect()
+            }
+            _ => HashSet::new()
+        }
+    }
+
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
+
+    use self::test::Bencher;
     use super::*;
     use super::super::reader;
 
@@ -620,6 +659,45 @@ mod tests {
                 &Bool(b) => assert!(b),
                 e => fail!("Unexpected: {}", e)
             }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[bench]
+    fn bench_fibonacci(b: &mut Bencher) {
+        let mut interpreter = Interpreter::new();
+        if let Ok(_) = evaluate_with_context("(defun fib (n) (if (or (= n 0) (= n 1)) 1 (+ (fib (- n 1)) (fib (- n 2)))))", &mut interpreter) {
+            b.iter(|| {
+                if let Ok(_) = evaluate_with_context("(fib 4)", &mut interpreter) {
+                    ()
+                } else {
+                    fail!("Unexpected error");
+                }
+            })
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[bench]
+    fn bench_addition(b: &mut Bencher) {
+        b.iter(|| {
+            evaluate("(+ 1 2)")
+        })
+    }
+
+    #[bench]
+    fn bench_factorial(b: &mut Bencher) {
+        let mut interpreter = Interpreter::new();
+        if let Ok(_) = evaluate_with_context("(defun fact (n) (if (= n 0) 1 (* n (fact (- n 1)))))", &mut interpreter) {
+            b.iter(|| {
+                if let Ok(_) = evaluate_with_context("(fact 5)", &mut interpreter) {
+                    ()
+                } else {
+                    fail!("Unexpected error");
+                }
+            })
         } else {
             fail!("Unexpected error")
         }

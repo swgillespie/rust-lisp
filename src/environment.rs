@@ -4,56 +4,35 @@ use std::collections::HashMap;
 use interpreter;
 
 pub struct Environment {
-    stack: Vec<StackFrame>
+    stack: Vec<HashMap<String, Rc<interpreter::LispValue>>>
 }
 
 impl Environment {
     pub fn new() -> Environment {
         Environment {
-            stack: vec![StackFrame::new()]
+            stack: vec![HashMap::new()]
         }
     }
 
     pub fn enter_scope(&mut self) {
-        self.stack.push(StackFrame::new());
+        self.stack.push(HashMap::new())
     }
 
     pub fn exit_scope(&mut self) {
-        self.stack.pop().expect("Popped from an empty stack");
+        self.stack.pop().expect("Popping from empty stack");
     }
 
     pub fn get(&mut self, key: String) -> Option<Rc<interpreter::LispValue>> {
-        for ref stack_frame in self.stack.iter() {
-            let lookup = stack_frame.get(&key);
-            if lookup.is_some() {
-                return lookup;
-            }
-        }
-        None
+        self.stack[self.stack.len() - 1].find_copy(&key)
+            .or(self.stack[0].find_copy(&key))
     }
 
     pub fn put(&mut self, key: String, value: Rc<interpreter::LispValue>) {
-        let top_of_stack = self.stack.get_mut(0);
-        top_of_stack.put(key, value);
-    }
-}
-
-struct StackFrame {
-    frame: HashMap<String, Rc<interpreter::LispValue>>,
-}
-
-impl StackFrame {
-    pub fn new() -> StackFrame {
-        StackFrame {
-            frame: HashMap::new(),
-        }
+        let len = self.stack.len();
+        self.stack.get_mut(len - 1).insert(key, value);
     }
 
-    pub fn get(&self, key: &String) -> Option<Rc<interpreter::LispValue>> {
-        self.frame.find_copy(key)
-    }
-
-    pub fn put(&mut self, key: String, value: Rc<interpreter::LispValue>) {
-        self.frame.insert(key, value);
+    pub fn put_global(&mut self, key: String, value: Rc<interpreter::LispValue>) {
+        self.stack.get_mut(0).insert(key, value);
     }
 }
