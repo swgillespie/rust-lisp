@@ -64,6 +64,33 @@ pub fn mul(params: Vec<Rc<LispValue>>) -> EvalResult {
         .map(|e| Rc::new(e))
 }
 
+// division function - exposed as (/) to Lisp
+pub fn div(params: Vec<Rc<LispValue>>) -> EvalResult {
+    if params.len() == 0 {
+        return Err("Incorrect number of parameters".to_string());
+    }
+    let initial = match params[0].deref() {
+        &Int(r) => Int(r),
+        &Float(r) => Float(r),
+        e => return Err(format!("Wrong type: {}", e))
+    };
+    params.into_iter()
+        .skip(1)
+        .fold(Ok(initial), |a, b| {
+            match a {
+                Ok(acc) => match (acc, b.deref()) {
+                    (Int(r), &Int(a)) => if a == 0 { Err(format!("Division by zero")) } else { Ok(Float(r as f32 / a as f32)) },
+                    (Int(r), &Float(a)) => if a == 0.0 { Err(format!("Division by zero")) } else { Ok(Float((r as f32) / a)) },
+                    (Float(r), &Int(a)) => if a == 0 { Err(format!("Division by zero")) } else { Ok(Float(r / (a as f32))) },
+                    (Float(r), &Float(a)) => if a == 0.0 { Err(format!("Division by zero")) } else { Ok(Float(r / a)) },
+                    (_, ref rb) => Err(format!("Wrong type: {}", rb))
+                },
+                Err(e) => Err(e)
+            }
+        })
+        .map(|e| Rc::new(e))
+}
+
 // car function - exposed as (car) to Lisp
 pub fn car(params: Vec<Rc<LispValue>>) -> EvalResult {
     if params.len() != 1 {
