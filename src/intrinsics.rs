@@ -100,3 +100,10 @@ pub fn eq(params: Vec<Rc<LispValue>>) -> EvalResult {
         });
     Ok(Rc::new(Bool(res)))
 }
+
+pub fn display(params: Vec<Rc<LispValue>>) -> EvalResult {
+    for ref value in params.iter() {
+        println!("{}", value);
+    }
+    Ok(Rc::new(Nil))
+}

@@ -131,6 +131,7 @@ impl Interpreter {
         self.expose_external_function("car".to_string(), intrinsics::car);
         self.expose_external_function("cdr".to_string(), intrinsics::cdr);
         self.expose_external_function("=".to_string(), intrinsics::eq);
+        self.expose_external_function("display".to_string(), intrinsics::display);
     }
 
     pub fn eval(&mut self, sexp: &reader::Sexp) -> EvalResult {
@@ -238,11 +239,6 @@ impl Interpreter {
         Ok(sexp_to_lvalue(sexp))
     }
 
-    #[allow(unused_variable)]
-    fn eval_lambda(&mut self, sexp: &reader::Sexp) -> EvalResult {
-        Err("not implemented".to_string())
-    }
-
     fn eval_if(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
             reader::Cons(ref condition,
@@ -305,6 +301,19 @@ impl Interpreter {
             _ => Err("No arguments to defun form".to_string())
         }
     }
+
+    fn eval_lambda(&mut self, sexp: &reader::Sexp) -> EvalResult {
+        match *sexp {
+            reader::Cons(ref parameters, box reader::Cons(ref body, box reader::Nil)) => {
+                let free_vars = self.get_free_variables(self.eval_list_as_parameter_list(&**parameters), &**body);
+                let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
+                let func = Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone()), closure));
+                Ok(Rc::new(func))
+            }
+            _ => Err("Incorrect pattern for lambda form".to_string())
+        }
+    }
+
 
     fn eval_symbol(&mut self, sym: String) -> EvalResult {
         match self.environment.get(sym.clone()) {
@@ -663,6 +672,36 @@ mod tests {
             fail!("Unexpected error")
         }
     }
+
+    #[test]
+    fn test_lambda() {
+        if let Ok(val) = evaluate("((lambda (x) (* x x)) 5)") {
+            match val.deref() {
+                &Int(b) => assert_eq!(b, 25),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }        
+    }
+
+    #[test]
+    fn test_higher_order_function() {
+        let mut interpreter = Interpreter::new();
+        if let Ok(_) = evaluate_with_context("(defun apply (f x) (f x))", &mut interpreter) {
+            if let Ok(val) = evaluate_with_context("(apply (lambda (x) (* x x)) 5)", &mut interpreter) {
+                match val.deref() {
+                    &Int(v) => assert_eq!(v, 25),
+                    e => fail!("Unexpected: {}", e)
+                }
+            } else {
+                fail!("Unexpected error");
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
 
     #[bench]
     fn bench_fibonacci(b: &mut Bencher) {
