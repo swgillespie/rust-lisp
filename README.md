@@ -1,8 +1,8 @@
-# rust-lisp [![Build Status](https://travis-ci.org/swgillespie/rust-lisp.svg?branch=master)](https://travis-ci.org/swgillespie/rust-lisp/) 
+# rust-lisp [![Build Status](https://travis-ci.org/swgillespie/rust-lisp.svg?branch=master)](https://travis-ci.org/swgillespie/rust-lisp/)
 
 Rust is my new favorite language and I've really wanted to use it in a project.
-I like languages so I wrote a minimal Lisp-like interpreter. It doesn't do a whole lot now
-but there'll be more stuff as I find the time.
+I like languages so I wrote a minimal Lisp-like interpreter. It draws heavy inspiration
+from both Common Lisp and Scheme.
 
 ## Building and running ##
 This project builds using Cargo. To build, clone this repository and run
@@ -15,22 +15,67 @@ or, simply,
 cargo run
 ```
 
-```cargo test``` will run the tests.
+```cargo test``` will run the tests, and ```cargo bench``` will run the benchmarks
 
-## Currently Supported
-* Basic arithmetic (+, -, *)
-* `car` and `cdr`
-* Quoting and unquoting (but not quasiquoting... yet)
-* Defining functions with `defun`
-* Defining and calling functions written in Rust
-* `if`, `define`, `quote`, `defun` fundamental forms
+## Features ##
+This lisp interpreter draws its heaviest inspiration from Scheme and most of its feature
+come directly from it.
+
+### Fundamental Forms ###
+This interpreter has ten fundamental forms as of right now:
+```
+if    defun    defmacro  define  lambda
+quote unquote  and       or      quasiquote
+```
+`defun` will be a macro in the future. Each one of these represents a fundamental
+feature of this lisp:
+
+* `(if condition true_branch false_branch?)` - Evaluates condition and execute true branch
+if condition is truthy, otherwise it executes false branch.
+* `(defun <symbol> parameters body)` - Define a function named <symbol> with the given
+parameter list and body. Places the function into the global namespace.
+* `(defmacro <symbol> parameter_form body_form)` - Defines a macro, not yet implemented.
+* `(define symbol form)` - Evaluates form and binds it to symbol in the global namespace.
+* `(lambda parameters body)` - Creates an anonymous function with parameter lisp and body.
+* `(quote form)` - Returns form unevaluated.
+* `(unquote form)` - Not implemented yet (requires quasiquote to make sense)
+* `(and form*)` - Evaluates every form unless one of them is `#f`, after which all other
+forms will not be evaluated (short circuit evaluation).
+* `(or form*)` - Evaluates every form unless one of them is truthy, after which all other forms
+will not be evaluated.
+* `(quasiquote form)` - Not implemented yet.
+
+`let` will be implemented as a macro as soon as they are implemented.
+
+### Multiple evaluation ###
+This interpreter will evaluate every form that it is given. As an example:
+```
+lisp> (+ 1 2) (+ 3 4) (+ 5 6)
+$0 = 3
+$1 = 7
+$2 = 11
+```
+
+In the future these `$x` variables may be bound to the current environment, but
+they aren't right now.
+
+### Nil vs Empty List ###
+This interpreter takes the side of Scheme on the nil vs empty list debate. `nil`
+is an ordinary symbol and carries no extra meaning. The empty list is written as
+`'()`, as in Scheme, and means the same thing:
+
+```
+lisp> (cdr '(1))
+$0 = ()
+```
+
+Attempting to evaluate an unquoted `()` will result in an error.
 
 ## TODO list
 
-- [ ] `lambda` form and closures
-- [ ] `quasiquote` form
-- [ ] `defmacro`, `unquote`, and macros
-- [ ] `eval` and `read`
+- [x] `lambda` form and closures
+- [ ] `defmacro`, `unquote`, `quasiquote`, and macros
+- [ ] `eval`, `read`, and `macro-expand`
 - [ ] don't trap on stack overflows
 - [ ] do something about integer overflows
 - [ ] a standard library
