@@ -8,8 +8,8 @@ pub fn add(params: Vec<Rc<LispValue>>) -> EvalResult {
             match a {
                 Ok(acc) => match (acc, b.deref()) {
                     (Int(r), &Int(a)) => Ok(Int(r + a)),
-                    (Int(r), &Float(a)) => Ok(Float((r as f32) + a)),
-                    (Float(r), &Int(a)) => Ok(Float(r + (a as f32))),
+                    (Int(r), &Float(a)) => Ok(Float((r as f64) + a)),
+                    (Float(r), &Int(a)) => Ok(Float(r + (a as f64))),
                     (Float(r), &Float(a)) => Ok(Float(r + a)),
                     (_, ref rb) => Err(format!("Wrong type: {}", rb))
                 },
@@ -35,8 +35,8 @@ pub fn sub(params: Vec<Rc<LispValue>>) -> EvalResult {
             match a {
                 Ok(acc) => match (acc, b.deref()) {
                     (Int(r), &Int(a)) => Ok(Int(r - a)),
-                    (Int(r), &Float(a)) => Ok(Float((r as f32) - a)),
-                    (Float(r), &Int(a)) => Ok(Float(r - (a as f32))),
+                    (Int(r), &Float(a)) => Ok(Float((r as f64) - a)),
+                    (Float(r), &Int(a)) => Ok(Float(r - (a as f64))),
                     (Float(r), &Float(a)) => Ok(Float(r - a)),
                     (_, ref rb) => Err(format!("Wrong type: {}", rb))
                 },
@@ -53,8 +53,8 @@ pub fn mul(params: Vec<Rc<LispValue>>) -> EvalResult {
             match a {
                 Ok(acc) => match (acc, b.deref()) {
                     (Int(r), &Int(a)) => Ok(Int(r * a)),
-                    (Int(r), &Float(a)) => Ok(Float((r as f32) * a)),
-                    (Float(r), &Int(a)) => Ok(Float(r * (a as f32))),
+                    (Int(r), &Float(a)) => Ok(Float((r as f64) * a)),
+                    (Float(r), &Int(a)) => Ok(Float(r * (a as f64))),
                     (Float(r), &Float(a)) => Ok(Float(r * a)),
                     (_, ref rb) => Err(format!("Wrong type: {}", rb))
                 },

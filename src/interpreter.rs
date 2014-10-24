@@ -11,8 +11,8 @@ use environment;
 // be values. LispValues are always used as a reference counted pointer.
 #[deriving(PartialEq)]
 pub enum LispValue {
-    Int(i32),
-    Float(f32),
+    Int(i64),
+    Float(f64),
     Str(String),
     Bool(bool),
     Symbol(String),
@@ -49,7 +49,7 @@ impl LispValue {
                 let (s_car, s_cdr) = self.print_cons(&**car, &**cdr);
                 format!("({} {})", s_car, s_cdr)
             },
-            Nil => "nil".to_string(),
+            Nil => "()".to_string(),
             Bool(v) => if v {
                 "#t".to_string()
             } else {
@@ -102,7 +102,7 @@ impl PartialEq for Function {
 impl Show for Function {
     fn fmt (&self, fmt: &mut Formatter) -> Result<(), FormatError> {
         match *self {
-            InternalFunction(_, _, _) => write!(fmt, "<internal function>"),
+            InternalFunction(_, _, _) => write!(fmt, "<function>"),
             ExternalFunction(_, _) => write!(fmt, "<external function>"),
             Macro(_, _) => write!(fmt, "<macro>")
         }
@@ -143,10 +143,11 @@ impl Interpreter {
             reader::Boolean(b) => Ok(Rc::new(Bool(b))),
             reader::Cons(box reader::Symbol(ref s), ref right) if self.is_intrinsic(s) => self.eval_intrinsic(s, &**right),
             reader::Cons(ref left, ref right) => self.eval_function(&**left, &**right),
-            reader::Nil => Ok(Rc::new(Nil))
+            reader::Nil => Err("Unknown form ()".to_string()),
+            _ => unreachable!()
         }
     }
-
+    
     pub fn expose_external_function(&mut self, name: String, func: fn(Vec<Rc<LispValue>>) -> EvalResult) {
         let wrapped_func = Func(ExternalFunction(name.clone(), func));
         self.environment.put(name.clone(), Rc::new(wrapped_func));
@@ -193,6 +194,7 @@ impl Interpreter {
                 },
                 Err(e) => Err(e)
             },
+            reader::Nil => Ok(Rc::new(Bool(true))),
             ref e => match self.eval(e) {
                 Ok(val) => match val.deref() {
                     &Bool(false) => Ok(val.clone()),
@@ -212,6 +214,7 @@ impl Interpreter {
                 },
                 Err(e) => Err(e)
             },
+            reader::Nil => Ok(Rc::new(Bool(false))),
             ref e => match self.eval(e) {
                 Ok(val) => match val.deref() {
                     &Bool(false) => Ok(val.clone()),
@@ -233,7 +236,8 @@ impl Interpreter {
                 reader::Symbol(ref s) => Rc::new(Symbol(s.clone())),
                 reader::Boolean(b) => Rc::new(Bool(b)),
                 reader::Cons(ref car, ref cdr) => Rc::new(Cons(sexp_to_lvalue(&**car), sexp_to_lvalue(&**cdr))),
-                reader::Nil => Rc::new(Nil)
+                reader::Nil => Rc::new(Nil),
+                _ => unreachable!()
             }
         }
         Ok(sexp_to_lvalue(sexp))
@@ -270,13 +274,13 @@ impl Interpreter {
         match *sexp {
             reader::Cons(box reader::Symbol(ref sym), box reader::Cons(ref exp, box reader::Nil)) => {
                 let value = try!(self.eval(&**exp));
-                self.environment.put_global(sym.clone(), value);
-                Ok(Rc::new(Nil))
+                self.environment.put_global(sym.clone(), value.clone());
+                Ok(value)
             }
             reader::Cons(box reader::Symbol(ref sym), ref exp) => {
                 let value = try!(self.eval(&**exp));
-                self.environment.put_global(sym.clone(), value);
-                Ok(Rc::new(Nil))
+                self.environment.put_global(sym.clone(), value.clone());
+                Ok(value)
             }
             reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
             _ => Err(format!("No arguments to define form"))
@@ -290,12 +294,15 @@ impl Interpreter {
 
     fn eval_defun(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(box reader::Symbol(ref sym), box reader::Cons(ref parameters, box reader::Cons(ref body, box reader::Nil))) => {
+            reader::Cons(box reader::Symbol(ref sym),
+                         box reader::Cons(ref parameters,
+                                          box reader::Cons(ref body,
+                                                           box reader::Nil))) => {
                 let free_vars = self.get_free_variables(self.eval_list_as_parameter_list(&**parameters), &**body);
                 let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
-                let func = Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone()), closure));
-                self.environment.put_global(sym.clone(), Rc::new(func));
-                Ok(Rc::new(Nil))
+                let func = Rc::new(Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone()), closure)));
+                self.environment.put_global(sym.clone(), func.clone());
+                Ok(func)
             }
             reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
             _ => Err("No arguments to defun form".to_string())
@@ -304,7 +311,9 @@ impl Interpreter {
 
     fn eval_lambda(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(ref parameters, box reader::Cons(ref body, box reader::Nil)) => {
+            reader::Cons(ref parameters,
+                         box reader::Cons(ref body,
+                                          box reader::Nil)) => {
                 let free_vars = self.get_free_variables(self.eval_list_as_parameter_list(&**parameters), &**body);
                 let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
                 let func = Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone()), closure));
@@ -436,7 +445,7 @@ impl Interpreter {
                 let free_car = self.get_variables(&**car);
                 let free_cdr = self.get_variables(&**cdr);
                 free_car.union(&free_cdr).map(|&ref x| x.clone()).collect()
-            }
+            },
             _ => HashSet::new()
         }
     }

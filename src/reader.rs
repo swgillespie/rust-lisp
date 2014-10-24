@@ -6,13 +6,14 @@ use std::io::{BufReader, BufferedReader, Reader};
 // to the rest of the list (cdr).
 #[deriving(Show, Clone)]
 pub enum Sexp {
-    Int(i32),
-    Float(f32),
+    Int(i64),
+    Float(f64),
     Str(String),
     Symbol(String),
     Boolean(bool),
     Cons(Box<Sexp>, Box<Sexp>),
     Nil,
+    NoMatch,
 }
 
 // A ReadResult is the output of the reader. It is either an S-expression upon
@@ -30,6 +31,19 @@ impl SexpReader {
         }
     }
 
+    pub fn parse_all<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> Result<Vec<Sexp>, String> {
+        let mut out = vec![];
+        loop {
+            match self.parse(reader) {
+                Ok(NoMatch) => break,
+                Err(v) => return Err(v),
+                Ok(v) => out.push(v)
+            }
+        }
+        Ok(out)
+    }
+    
+    
     // Top-level parse of an S-expression. The empty string is parsed as
     // a Nil.
     pub fn parse<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
@@ -44,15 +58,23 @@ impl SexpReader {
                     self.parse_atom(reader)
                 }
             },
-            None => Ok(Nil)
+            None => Ok(NoMatch)
         }
     }
 
     // Wrapper around parse() that allows for the parsing of strings.
+    // not actually dead code - used in the tests.
+    #[allow(dead_code)]
     pub fn parse_str(&mut self, string: &str) -> ReadResult {
         let reader = BufReader::new(string.as_bytes());
         let mut buf_reader = BufferedReader::new(reader);
         self.parse(&mut buf_reader)
+    }
+
+    pub fn parse_str_all(&mut self, string: &str) -> Result<Vec<Sexp>, String> {
+        let reader = BufReader::new(string.as_bytes());
+        let mut buf_reader = BufferedReader::new(reader);
+        self.parse_all(&mut buf_reader)
     }
 
     fn parse_quoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
@@ -76,31 +98,10 @@ impl SexpReader {
     fn parse_list<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
         let car = match self.parse(reader) {
             Ok(value) => value,
-            Err(e) => return Err(e)
-        };
-
-        let cdr = match self.peek_char(reader, true) {
-            Some(e) if e == '.' => {
-                let _ = self.get_char(reader, true);
-                try!(self.parse(reader))
-            },
-            Some(_) => {
-                try!(self.parse_list_tail(reader))
-            },
-            None => return Err("Unexpected EOF, expected ., atom, or )".to_string())
-        };
-
-        match self.get_char(reader, true) {
-            Some(e) if e == ')' => Ok(Cons(box car, box cdr)),
-            Some(_) => Err("Expected )".to_string()),
-            None => Err("Unexpected EOF, expected )".to_string())
-        }
-    }
-
-    fn parse_list_tail<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
-        let car = match self.parse(reader) {
-            Ok(value) => value,
-            Err(_) => return Ok(Nil)
+            Err(e) => match self.get_char(reader, true) {
+                Some(')') => return Ok(Nil),
+                _ => return Err(e)
+            }
         };
         let cdr = match self.get_char(reader, true) {
             Some(e) if e == '.' => {
@@ -110,13 +111,13 @@ impl SexpReader {
                     // if we are, treat it like a symbol
                     _ => {
                         self.unget_char(e);
-                        try!(self.parse_list_tail(reader))
+                        try!(self.parse_list(reader))
                     }
                 }
             },
             Some(e) => {
                 self.unget_char(e);
-                try!(self.parse_list_tail(reader))
+                try!(self.parse_list(reader))
             },
             None => return Err("Unexpected EOF, expected . or atom".to_string())
         };
@@ -202,9 +203,9 @@ impl SexpReader {
             }
         }
         if is_double {
-            Ok(Float(from_str::<f32>(string.as_slice()).unwrap()))
+            Ok(Float(from_str::<f64>(string.as_slice()).unwrap()))
         } else {
-            Ok(Int(from_str::<i32>(string.as_slice()).unwrap()))
+            Ok(Int(from_str::<i64>(string.as_slice()).unwrap()))
         }
     }
 
@@ -226,10 +227,7 @@ impl SexpReader {
                 None => break
             }
         }
-        match symbol.as_slice() {
-            "nil" => Ok(Nil),
-            _ => Ok(Symbol(symbol))
-        }
+        Ok(Symbol(symbol))
     }
 
     fn is_valid_for_identifier(&self, c: char) -> bool {
@@ -422,5 +420,63 @@ mod tests {
             _ => fail!("Parsed incorrectly, got {}", sexp)
         }
     }
+
+    #[test]
+    fn parses_empty_list() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str("()");
+        assert!(result.is_ok(), "parse failed: {}", result);
+        let sexp = result.unwrap();
+        match sexp {
+            Nil => (),
+            _ => fail!("Parsed incorrectly, got {}", sexp)
+        }
+    }
+
+    #[test]
+    fn parses_quoted_empty_list() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str("'()");
+        assert!(result.is_ok(), "parse failed: {}", result);
+        let sexp = result.unwrap();
+        match sexp {
+            Cons(box Symbol(ref quote), box Nil) => assert_eq!(*quote, "quote".to_string()),
+            _ => fail!("Parsed incorrectly, got {}", sexp)
+        }
+    }
+
+    
+    #[test]
+    fn parses_several_expressions() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str_all("(hello) (world)");
+        let sexp = result.unwrap();
+        assert_eq!(sexp.len(), 2);
+        match sexp[0] {
+            Cons(box Symbol(ref s), box Nil) => assert_eq!(*s, "hello".to_string()),
+            ref s => fail!("Parsed incorrectly, got {}", s)
+        };
+        match sexp[1] {
+            Cons(box Symbol(ref s), box Nil) => assert_eq!(*s, "world".to_string()),
+            ref s => fail!("Parsed incorrectly, got {}", s)
+        }
+    }
+
+    #[test]
+    fn parses_several_empty_lists() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str_all("()()");
+        let sexp = result.unwrap();
+        assert_eq!(sexp.len(), 2);
+        match sexp[0] {
+            Nil => (),
+            ref s => fail!("Parsed incorrectly, got {}", s)
+        };
+        match sexp[1] {
+            Nil => (),
+            ref s => fail!("Parsed incorrectly, got {}", s)
+        }
+    }
+
 
 }
