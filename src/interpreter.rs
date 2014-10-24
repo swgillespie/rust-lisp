@@ -128,6 +128,7 @@ impl Interpreter {
         self.expose_external_function("+".to_string(), intrinsics::add);
         self.expose_external_function("-".to_string(), intrinsics::sub);
         self.expose_external_function("*".to_string(), intrinsics::mul);
+        self.expose_external_function("/".to_string(), intrinsics::div);
         self.expose_external_function("car".to_string(), intrinsics::car);
         self.expose_external_function("cdr".to_string(), intrinsics::cdr);
         self.expose_external_function("=".to_string(), intrinsics::eq);
@@ -505,6 +506,18 @@ mod tests {
         if let Ok(val) = evaluate("(- 1 2)") {
             match val.deref() {
                 &Int(x) => assert_eq!(x, -1),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[test]
+    fn test_division() {
+        if let Ok(val) = evaluate("(/ 8 2 2.5)") {
+            match val.deref() {
+                &Float(x) => assert_eq!(x, 1.6),
                 e => fail!("Unexpected: {}", e)
             }
         } else {
