@@ -79,9 +79,9 @@ pub fn div(params: Vec<Rc<LispValue>>) -> EvalResult {
         .fold(Ok(initial), |a, b| {
             match a {
                 Ok(acc) => match (acc, b.deref()) {
-                    (Int(r), &Int(a)) => if a == 0 { Err(format!("Division by zero")) } else { Ok(Float(r as f32 / a as f32)) },
-                    (Int(r), &Float(a)) => if a == 0.0 { Err(format!("Division by zero")) } else { Ok(Float((r as f32) / a)) },
-                    (Float(r), &Int(a)) => if a == 0 { Err(format!("Division by zero")) } else { Ok(Float(r / (a as f32))) },
+                    (Int(r), &Int(a)) => if a == 0 { Err(format!("Division by zero")) } else { Ok(Float(r as f64 / a as f64)) },
+                    (Int(r), &Float(a)) => if a == 0.0 { Err(format!("Division by zero")) } else { Ok(Float((r as f64) / a)) },
+                    (Float(r), &Int(a)) => if a == 0 { Err(format!("Division by zero")) } else { Ok(Float(r / (a as f64))) },
                     (Float(r), &Float(a)) => if a == 0.0 { Err(format!("Division by zero")) } else { Ok(Float(r / a)) },
                     (_, ref rb) => Err(format!("Wrong type: {}", rb))
                 },
