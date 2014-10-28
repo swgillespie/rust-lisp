@@ -68,8 +68,35 @@ is an ordinary symbol and carries no extra meaning. The empty list is written as
 lisp> (cdr '(1))
 $0 = ()
 ```
-
 Attempting to evaluate an unquoted `()` will result in an error.
+
+### Improper parameter lists ###
+
+Improper lists can be used as the parameter form in a lambda, defun, or defmacro. An
+improper list binds all remaining parameters to the final parameter. As an example,
+
+```
+lisp> (defun test (first second third . rest) rest)
+$0 = <function>
+```
+
+This defines a function that takes three or more parameters. The first
+parameter is always bound to `first`, the second to `second`, and the third
+to `third`. If there are more than three parameters, the remaining parameters
+are bound as a list to `rest`. For example,
+
+```
+lisp> (test 1 2 3 4 5)
+$0 = (4 5)
+```
+
+When there are exactly as many parameters as there are required parameters,
+the rest parameter is the null list. For example,
+
+```
+lisp> (test 1 2 3)
+$0 = ()
+```
 
 ## TODO list
 
@@ -81,5 +108,6 @@ Attempting to evaluate an unquoted `()` will result in an error.
 - [ ] a standard library
 - [ ] bytecode interpreter?
 - [ ] mark and sweep GC?
+- [ ] WRITE MORE TESTS
 
 Rust is awesome!

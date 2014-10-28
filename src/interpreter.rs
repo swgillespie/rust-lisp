@@ -77,12 +77,32 @@ impl LispValue {
     }
 }
 
+pub enum FunctionParameters {
+    Fixed(Vec<String>),
+    Variadic(Vec<String>, String)
+}
+
+impl FunctionParameters {
+    pub fn get_variables(&self) -> Vec<String> {
+        match *self {
+            Fixed(ref vec) => vec.clone(),
+            Variadic(ref vec, ref rest) => {
+                let mut temp = vec.clone();
+                temp.push(rest.clone());
+                temp
+            }
+        }
+    }
+}
+
+type Closure = Vec<(String, Option<Rc<LispValue>>)>;
+
 // Functions can be one of three things - an internal function (defined by defun or
 // lambda), an external Rust function exposed to the interpreter, or a macro.
 // Macros aren't supported yet.
 #[allow(dead_code)] // macros aren't used yet
 pub enum Function {
-    InternalFunction(Rc<reader::Sexp>, Rc<reader::Sexp>, Vec<(String, Option<Rc<LispValue>>)>),
+    InternalFunction(FunctionParameters, Rc<reader::Sexp>, Closure),
     ExternalFunction(String, fn(Vec<Rc<LispValue>>) -> EvalResult),
     Macro(Rc<reader::Sexp>, Rc<reader::Sexp>),
 }
@@ -299,9 +319,10 @@ impl Interpreter {
                          box reader::Cons(ref parameters,
                                           box reader::Cons(ref body,
                                                            box reader::Nil))) => {
-                let free_vars = self.get_free_variables(self.eval_list_as_parameter_list(&**parameters), &**body);
+                let params = self.eval_list_as_parameter_list(&**parameters);
+                let free_vars = self.get_free_variables(params.get_variables(), &**body);
                 let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
-                let func = Rc::new(Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone()), closure)));
+                let func = Rc::new(Func(InternalFunction(params, Rc::new(*body.clone()), closure)));
                 self.environment.put_global(sym.clone(), func.clone());
                 Ok(func)
             }
@@ -315,9 +336,10 @@ impl Interpreter {
             reader::Cons(ref parameters,
                          box reader::Cons(ref body,
                                           box reader::Nil)) => {
-                let free_vars = self.get_free_variables(self.eval_list_as_parameter_list(&**parameters), &**body);
+                let params = self.eval_list_as_parameter_list(&**parameters);
+                let free_vars = self.get_free_variables(params.get_variables(), &**body);
                 let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
-                let func = Func(InternalFunction(Rc::new(*parameters.clone()), Rc::new(*body.clone()), closure));
+                let func = Func(InternalFunction(params, Rc::new(*body.clone()), closure));
                 Ok(Rc::new(func))
             }
             _ => Err("Incorrect pattern for lambda form".to_string())
@@ -336,7 +358,7 @@ impl Interpreter {
         let sym_val = try!(self.eval(car));
         match *sym_val {
             Func(ref f) => match *f {
-                InternalFunction(ref parameters, ref body, ref closure) => self.eval_internal_function(cdr, parameters.clone(), body.clone(), closure),
+                InternalFunction(ref parameters, ref body, ref closure) => self.eval_internal_function(cdr, parameters, body.clone(), closure),
                 ExternalFunction(_, func) => self.eval_external_function(cdr, func),
                 Macro(ref parameters, ref body) => self.eval_macro(cdr, parameters.clone(), body.clone())
             },
@@ -346,17 +368,32 @@ impl Interpreter {
 
     fn eval_internal_function(&mut self,
                               actual_params: &reader::Sexp,
-                              formal_params: Rc<reader::Sexp>,
+                              formal_params: &FunctionParameters,
                               body: Rc<reader::Sexp>,
-                              closure: &Vec<(String, Option<Rc<LispValue>>)>) -> EvalResult {
+                              closure: &Closure) -> EvalResult {
         let params = try!(self.eval_list_as_parameters(actual_params));
-        let list = self.eval_list_as_parameter_list(formal_params.deref());
-        if params.len() != list.len() {
-            return Err("Incorrect number of parameters".to_string());
-        }
+        let actual : &Vec<String> = match *formal_params {
+            Fixed(ref vec) => {
+                if params.len() != vec.len() {
+                    return Err("Incorrect number of parameters".to_string());
+                }
+                vec
+            },
+            Variadic(ref vec, _) => {
+                if params.len() < vec.len() {
+                    return Err("Incorrect number of parameters".to_string());
+                }
+                vec
+            }
+        };
         self.environment.enter_scope();
-        for (value, binding) in params.iter().zip(list.iter()) {
+        for (value, binding) in params.iter().zip(actual.iter()) {
             self.environment.put(binding.clone(), value.clone());
+        }
+        if let Variadic(_, ref rest) = *formal_params {
+            let rest_as_vector = params.iter().skip(actual.len());
+            let list = self.iter_to_list(rest_as_vector);
+            self.environment.put(rest.clone(), list);
         }
         for &(ref binding, ref value) in closure.iter() {
             match *value {
@@ -370,6 +407,13 @@ impl Interpreter {
         let result = self.eval(body.deref());
         self.environment.exit_scope();
         result
+    }
+
+    fn iter_to_list<'a, T: Iterator<&'a Rc<LispValue>>>(&mut self, mut iter: T) -> Rc<LispValue> {
+        match iter.next() {
+            Some(v) => Rc::new(Cons(v.clone(), self.iter_to_list(iter))),
+            None => Rc::new(Nil)
+        }
     }
 
     fn eval_external_function(&mut self,
@@ -417,15 +461,29 @@ impl Interpreter {
     // The function is similar to eval_list_as_parameters, but it just gets the names
     // of all of the symbols in the linked list instead of evaluating them. This
     // is also used for evaluating parameters for a function call.
-    fn eval_list_as_parameter_list(&self, params: &reader::Sexp) -> Vec<String> {
-        match *params {
-            reader::Cons(box reader::Symbol(ref s), ref cdr) => {
-                let mut result = vec![s.clone()];
-                result.extend(self.eval_list_as_parameter_list(&**cdr).into_iter());
-                result
-            },
-            reader::Nil => vec![],
-            _ => unreachable!()
+    fn eval_list_as_parameter_list(&self, params: &reader::Sexp) -> FunctionParameters {
+        let mut cursor = params;
+        let mut out = vec![];
+        let mut out_rest = None;
+        loop {
+            match *cursor {
+                reader::Cons(box reader::Symbol(ref s), box reader::Symbol(ref rest)) => {
+                    out.push(s.clone());
+                    out_rest = Some(rest.clone());
+                    break;
+                },
+                reader::Cons(box reader::Symbol(ref s), ref cdr) => {
+                    out.push(s.clone());
+                    cursor = &**cdr;
+                },
+                reader::Nil => break,
+                _ => unreachable!()
+            };
+        }
+        if out_rest.is_some() {
+            Variadic(out, out_rest.unwrap())
+        } else {
+            Fixed(out)
         }
     }
 
@@ -723,6 +781,27 @@ mod tests {
             fail!("Unexpected error")
         }
     }
+
+    #[test]
+    fn test_improper_parameter_list() {
+        let mut interpreter = Interpreter::new();
+        if let Ok(_) = evaluate_with_context("(defun test-thing (first . rest) rest)", &mut interpreter) {
+            if let Ok(val) = evaluate_with_context("(test-thing 1 2)", &mut interpreter) {
+                match val.deref() {
+                    &Cons(ref left, ref right) => match (left.deref(), right.deref()) {
+                        (&Int(a), &Nil) => assert_eq!(a, 2),
+                        e => fail!("Unexpected: {}", e)
+                    },
+                    e => fail!("Unexpected: {}", e)
+                }
+            } else {
+                fail!("Unexpected error");
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
 
 
     #[bench]

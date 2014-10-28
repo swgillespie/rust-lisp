@@ -107,7 +107,13 @@ impl SexpReader {
             Some(e) if e == '.' => {
                 // look ahead one token to see if we are looking at an ellipsis (...)
                 match self.peek_char(reader, true) {
-                    Some(v) if v != '.' => try!(self.parse(reader)),
+                    Some(v) if v != '.' => {
+                        let result = try!(self.parse(reader));
+                        match self.get_char(reader, true) {
+                            Some(')') => result,
+                            _ => return Err("Expected )".to_string())
+                        }
+                    }
                     // if we are, treat it like a symbol
                     _ => {
                         self.unget_char(e);
@@ -476,6 +482,28 @@ mod tests {
             Nil => (),
             ref s => fail!("Parsed incorrectly, got {}", s)
         }
+    }
+
+    #[test]
+    fn parses_several_improper_lists() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str_all("(1 . 2) (3 . 4)");
+        let sexp = result.unwrap();
+        assert_eq!(sexp.len(), 2);
+        match sexp[0] {
+            Cons(box Int(a), box Int(b)) => {
+                assert_eq!(a, 1);
+                assert_eq!(b, 2);
+            },
+            ref s => fail!("Parsed incorrectly, got {}", s)
+        };
+        match sexp[1] {
+            Cons(box Int(a), box Int(b)) => {
+                assert_eq!(a, 3);
+                assert_eq!(b, 4);
+            },
+            ref s => fail!("Parsed incorrectly, got {}", s)
+        };
     }
 
 
