@@ -122,7 +122,7 @@ impl PartialEq for Function {
 impl Show for Function {
     fn fmt (&self, fmt: &mut Formatter) -> Result<(), FormatError> {
         match *self {
-            InternalFunction(_, _, _) => write!(fmt, "<function>"),
+            InternalFunction(_, _, _) => write!(fmt, "<function"),
             ExternalFunction(_, _) => write!(fmt, "<external function>"),
             Macro(_, _) => write!(fmt, "<macro>")
         }
@@ -151,6 +151,7 @@ impl Interpreter {
         self.expose_external_function("/".to_string(), intrinsics::div);
         self.expose_external_function("car".to_string(), intrinsics::car);
         self.expose_external_function("cdr".to_string(), intrinsics::cdr);
+        self.expose_external_function("cons".to_string(), intrinsics::cons);
         self.expose_external_function("=".to_string(), intrinsics::eq);
         self.expose_external_function("display".to_string(), intrinsics::display);
     }
@@ -310,7 +311,33 @@ impl Interpreter {
 
     #[allow(unused_variable)]
     fn eval_quasiquote(&mut self, sexp: &reader::Sexp) -> EvalResult {
-        Err("not implemented".to_string())
+        match *sexp {
+            reader::Cons(box reader::Cons(box reader::Symbol(ref s), ref quoted), ref cdr) if *s == "unquote".to_string() => {
+                let result = try!(self.eval(&**quoted));
+                let rest = try!(self.eval_quasiquote(&**cdr));
+                Ok(Rc::new(Cons(result, rest)))
+            },
+            reader::Cons(box reader::Symbol(ref s), ref quoted) if *s == "unquote".to_string() => {
+                let result = try!(self.eval(&**quoted));
+                Ok(result)
+            },
+            reader::Cons(box reader::Cons(box reader::Symbol(ref s), ref quoted), box reader::Nil) if *s == "unquote-splicing".to_string() => {
+                let result = try!(self.eval(&**quoted));
+                Ok(result)
+            }
+            reader::Cons(box reader::Cons(box reader::Symbol(ref s), ref quoted), ref cdr) if *s == "unquote-splicing".to_string() => {
+                Err("Invalid unquote-splicing form".to_string())
+            }
+            reader::Cons(box reader::Symbol(ref s), ref quoted) if *s == "unquote-splicing".to_string() => {
+                Err("Invalid unquote-splicing form".to_string())
+            },
+            reader::Cons(ref car, ref cdr) => {
+                let result = try!(self.eval_quote(&**car));
+                let rest = try!(self.eval_quasiquote(&**cdr));
+                Ok(Rc::new(Cons(result, rest)))
+            }
+            ref val => self.eval_quote(val)
+        }
     }
 
     fn eval_defun(&mut self, sexp: &reader::Sexp) -> EvalResult {
@@ -345,7 +372,6 @@ impl Interpreter {
             _ => Err("Incorrect pattern for lambda form".to_string())
         }
     }
-
 
     fn eval_symbol(&mut self, sym: String) -> EvalResult {
         match self.environment.get(sym.clone()) {
@@ -518,6 +544,7 @@ mod tests {
     use self::test::Bencher;
     use super::*;
     use super::super::reader;
+    use std::io::Command;
 
     fn evaluate(input: &'static str) -> EvalResult {
         let mut interpreter = Interpreter::new();
@@ -766,6 +793,101 @@ mod tests {
     }
 
     #[test]
+    fn test_atom_quasiquote_unquote() {
+        if let Ok(val) = evaluate("`,10") {
+            match val.deref() {
+                &Int(b) => assert_eq!(b, 10),
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }        
+    }
+
+    #[test]
+    fn test_quasiquote_with_no_unquote() {
+        if let Ok(val) = evaluate("`(1 2 3)") {
+            match val.deref() {
+                &Cons(ref car, ref cdr) => {
+                    assert_eq!(car.deref(), &Int(1));
+                    match cdr.deref() {
+                        &Cons(ref car_2, ref cdr_2) => {
+                            assert_eq!(car_2.deref(), &Int(2));
+                            match cdr_2.deref() {
+                                &Cons(ref car_3, ref cdr_3) => {
+                                    assert_eq!(car_3.deref(), &Int(3));
+                                    assert_eq!(cdr_3.deref(), &Nil);
+                                },
+                                e => fail!("Unexpected: {}", e)
+                            }
+                        },
+                        e => fail!("Unexpected: {}", e)
+                    }
+                }
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }        
+    }
+
+    #[test]
+    fn test_quasiquote_with_unquote() {
+        if let Ok(val) = evaluate("`(1 2 ,(* 2 2))") {
+            match val.deref() {
+                &Cons(ref car, ref cdr) => {
+                    assert_eq!(car.deref(), &Int(1));
+                    match cdr.deref() {
+                        &Cons(ref car_2, ref cdr_2) => {
+                            assert_eq!(car_2.deref(), &Int(2));
+                            match cdr_2.deref() {
+                                &Cons(ref car_3, ref cdr_3) => {
+                                    assert_eq!(car_3.deref(), &Int(4));
+                                    assert_eq!(cdr_3.deref(), &Nil);
+                                },
+                                e => fail!("Unexpected: {}", e)
+                            }
+                        },
+                        e => fail!("Unexpected: {}", e)
+                    }
+                }
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }        
+    }
+
+    #[test]
+    fn test_quasiquote_with_unquote_splicing() {
+        if let Ok(val) = evaluate("`(1 ,@'(2 3))") {
+            match val.deref() {
+                &Cons(ref car, ref cdr) => {
+                    assert_eq!(car.deref(), &Int(1));
+                    match cdr.deref() {
+                        &Cons(ref car_2, ref cdr_2) => {
+                            assert_eq!(car_2.deref(), &Int(2));
+                            match cdr_2.deref() {
+                                &Cons(ref car_3, ref cdr_3) => {
+                                    assert_eq!(car_3.deref(), &Int(3));
+                                    assert_eq!(cdr_3.deref(), &Nil);
+                                },
+                                e => fail!("Unexpected: {}", e)
+                            }
+                        },
+                        e => fail!("Unexpected: {}", e)
+                    }
+                }
+                e => fail!("Unexpected: {}", e)
+            }
+        } else {
+            fail!("Unexpected error")
+        }        
+    }
+
+
+
+    #[test]
     fn test_higher_order_function() {
         let mut interpreter = Interpreter::new();
         if let Ok(_) = evaluate_with_context("(defun apply (f x) (f x))", &mut interpreter) {
@@ -841,5 +963,45 @@ mod tests {
         } else {
             fail!("Unexpected error")
         }
+    }
+
+    #[bench]
+    fn lisp_first_25_squares(b: &mut Bencher) {
+        let mut interpreter = Interpreter::new();
+        if let Ok(_) = evaluate_with_context("(defun map (f list) (if (= list '()) '() (cons (f (car list)) (map f (cdr list)))))", &mut interpreter) {
+            if let Ok(_) = evaluate_with_context("(defun reduce (f z l) (if (= l '()) z (f (car l) (reduce f z (cdr l)))))", &mut interpreter) {
+                b.iter(|| {
+                    if let Ok(_) = evaluate_with_context("(reduce + 0 (map (lambda (x) (* x x)) '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25)))", &mut interpreter) {
+                        ()
+                    } else {
+                        fail!("Unexpected error");
+                    }
+                })
+            }
+        } else {
+            fail!("Unexpected error")
+        }
+    }
+
+    #[bench]
+    fn rust_first_25_squares(b: &mut Bencher) {
+        b.iter(|| {
+            let vec = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25i];
+            test::black_box(vec.iter().map(|x| *x * *x).fold(0, |a, b| a + b));
+        })
+    }
+
+    #[bench]
+    fn python_first_25_squares(b: &mut Bencher) {
+        b.iter(|| {
+            Command::new("python").arg("-c").arg("print reduce(lambda x, y: x + y, map(lambda x: x * x, range(1, 25)))")
+        })
+    }
+
+    #[bench]
+    fn ruby_first_25_squares(b: &mut Bencher) {
+        b.iter(|| {
+            Command::new("ruby").arg("'e").arg("puts (1..25).to_a.map { |x| x * x } .reduce(:+)")
+        })
     }
 }

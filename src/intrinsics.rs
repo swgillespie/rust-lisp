@@ -115,6 +115,13 @@ pub fn cdr(params: Vec<Rc<LispValue>>) -> EvalResult {
     }
 }
 
+pub fn cons(params: Vec<Rc<LispValue>>) -> EvalResult {
+    if params.len() != 2 {
+        return Err("Incorrect number of parameters".to_string())
+    }
+    Ok(Rc::new(Cons(params[0].clone(), params[1].clone())))
+}
+
 // eq function - exposed as (=) to Lisp.
 pub fn eq(params: Vec<Rc<LispValue>>) -> EvalResult {
     if params.len() == 0 {

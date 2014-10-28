@@ -30,22 +30,27 @@ quote unquote  and       or      quasiquote
 `defun` will be a macro in the future. Each one of these represents a fundamental
 feature of this lisp:
 
-* `(if condition true_branch false_branch?)` - Evaluates condition and execute true branch
+* `(if condition true_branch false_branch?)` - Evaluates condition and executes the true branch
 if condition is truthy, otherwise it executes false branch.
 * `(defun <symbol> parameters body)` - Define a function named <symbol> with the given
 parameter list and body. Places the function into the global namespace.
 * `(defmacro <symbol> parameter_form body_form)` - Defines a macro, not yet implemented.
 * `(define symbol form)` - Evaluates form and binds it to symbol in the global namespace.
-* `(lambda parameters body)` - Creates an anonymous function with parameter lisp and body.
-* `(quote form)` - Returns form unevaluated.
-* `(unquote form)` - Not implemented yet (requires quasiquote to make sense)
+* `(lambda parameters body)` - Creates an anonymous function with parameter list and body.
+* `(quote form)` - Returns the form unevaluated.
+* `(unquote form)` - If currently evaluating a `quasiquote` form, escapes the quote and evaluates
+`form` as it would normally. Only that form is evaluated. This is not usually called directly -
+it is almost always invoked using the `,` reader macro.
 * `(and form*)` - Evaluates every form unless one of them is `#f`, after which all other
 forms will not be evaluated (short circuit evaluation).
 * `(or form*)` - Evaluates every form unless one of them is truthy, after which all other forms
 will not be evaluated.
-* `(quasiquote form)` - Not implemented yet.
-
-`let` will be implemented as a macro as soon as they are implemented.
+* `(quasiquote form)` - Increments the "quasiquotation" level of the form. This behaves exactly
+as the `quote` form, except that `unquote` and `unquote-splicing` allow for the select evaluation
+of forms. This is not usually called directly - it is almost always invoked using the \` reader macro.
+* `(unquote-splicing form)` - Behaves the same as `unquote`, except that if form evaluates to a list,
+it will flatten the list, and otherwise it will produce an improper list. This is not usually called directly -
+it is almost always invoked using the `,@` reader macro.
 
 ### Multiple evaluation ###
 This interpreter will evaluate every form that it is given. As an example:

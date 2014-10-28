@@ -84,14 +84,24 @@ impl SexpReader {
     }
 
     fn parse_unquoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
-        let cdr = try!(self.parse(reader));
-        let new_sexp = Cons(box Symbol("unquote".to_string()), box Cons(box cdr, box Nil));
-        Ok(new_sexp)
+        match self.peek_char(reader, true) {
+            Some('@') => {
+                let _ = self.get_char(reader, true);
+                let cdr = try!(self.parse(reader));
+                let new_sexp = Cons(box Symbol("unquote-splicing".to_string()), box cdr);
+                Ok(new_sexp)
+            },
+            _ => {
+                let cdr = try!(self.parse(reader));
+                let new_sexp = Cons(box Symbol("unquote".to_string()), box cdr);
+                Ok(new_sexp)
+            }
+        }
     }
 
     fn parse_quasiquoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
         let cdr = try!(self.parse(reader));
-        let new_sexp = Cons(box Symbol("quasiquote".to_string()), box Cons(box cdr, box Nil));
+        let new_sexp = Cons(box Symbol("quasiquote".to_string()), box cdr);
         Ok(new_sexp)
     }
 
@@ -451,6 +461,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parses_quasiquote() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str("`5");
+        assert!(result.is_ok(), "parse failed: {}", result);
+        let sexp = result.unwrap();
+        match sexp {
+            Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "quasiquote".to_string()),
+            _ => fail!("Parsed incorrectly, got {}", sexp)
+        }
+    }
+
+    #[test]
+    fn parses_unquote() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str(",5");
+        assert!(result.is_ok(), "parse failed: {}", result);
+        let sexp = result.unwrap();
+        match sexp {
+            Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "unquote".to_string()),
+            _ => fail!("Parsed incorrectly, got {}", sexp)
+        }
+    }
+
+    #[test]
+    fn parses_unquote_splicing() {
+        let mut reader = SexpReader::new();
+        let result = reader.parse_str(",@5");
+        assert!(result.is_ok(), "parse failed: {}", result);
+        let sexp = result.unwrap();
+        match sexp {
+            Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "unquote-splicing".to_string()),
+            _ => fail!("Parsed incorrectly, got {}", sexp)
+        }
+    }
     
     #[test]
     fn parses_several_expressions() {
