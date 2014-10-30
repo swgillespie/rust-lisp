@@ -104,7 +104,7 @@ type Closure = Vec<(String, Option<Rc<LispValue>>)>;
 pub enum Function {
     InternalFunction(FunctionParameters, Rc<reader::Sexp>, Closure),
     ExternalFunction(String, fn(Vec<Rc<LispValue>>) -> EvalResult),
-    Macro(Rc<reader::Sexp>, Rc<reader::Sexp>),
+    Macro(FunctionParameters, Rc<reader::Sexp>),
 }
 
 // Impl of PartialEq for the Function type indicating that functions can never
@@ -122,7 +122,7 @@ impl PartialEq for Function {
 impl Show for Function {
     fn fmt (&self, fmt: &mut Formatter) -> Result<(), FormatError> {
         match *self {
-            InternalFunction(_, _, _) => write!(fmt, "<function"),
+            InternalFunction(_, _, _) => write!(fmt, "<function>"),
             ExternalFunction(_, _) => write!(fmt, "<external function>"),
             Macro(_, _) => write!(fmt, "<macro>")
         }
@@ -132,13 +132,15 @@ impl Show for Function {
 pub type EvalResult = Result<Rc<LispValue>, String>;
 
 pub struct Interpreter {
-    environment: environment::Environment
+    environment: environment::Environment,
+    quasiquote_level: uint
 }
 
 impl Interpreter {
     pub fn new() -> Interpreter {
         let mut interpreter = Interpreter {
-            environment: environment::Environment::new()
+            environment: environment::Environment::new(),
+            quasiquote_level: 0
         };
         interpreter.load_intrinsics();
         interpreter
@@ -186,6 +188,7 @@ impl Interpreter {
                 | "unquote"
                 | "and"
                 | "or"
+                | "progn"
                 | "quasiquote" => true,
             _ => false
         }
@@ -202,10 +205,27 @@ impl Interpreter {
             "defun" => self.eval_defun(sexp),
             "and" => self.eval_and(sexp),
             "or" => self.eval_or(sexp),
-            "defmacro" => Err("not supported yet".to_string()),
+            "defmacro" => self.eval_defmacro(sexp),
+            "progn" => self.eval_progn(sexp),
             _ => unreachable!()
         }
     }
+
+    fn eval_progn(&mut self, sexp: &reader::Sexp) -> EvalResult {
+        let mut last : Option<Rc<LispValue>> = None;
+        let mut cursor = sexp;
+        loop {
+            match *cursor {
+                reader::Nil => return Ok(last.unwrap_or(Rc::new(Nil))),
+                reader::Cons(ref car, ref cdr) => {
+                    let result = try!(self.eval(&**car));
+                    last = Some(result.clone());
+                    cursor = &**cdr;
+                }
+                _ => return Err("Improper lists disallowed in progn form".to_string())
+            }
+        }
+    } 
 
     fn eval_and(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
@@ -247,7 +267,6 @@ impl Interpreter {
             }
         }
     }
-
 
     fn eval_quote(&mut self, sexp: &reader::Sexp) -> EvalResult {
         fn sexp_to_lvalue(s: &reader::Sexp) -> Rc<LispValue> {
@@ -386,7 +405,7 @@ impl Interpreter {
             Func(ref f) => match *f {
                 InternalFunction(ref parameters, ref body, ref closure) => self.eval_internal_function(cdr, parameters, body.clone(), closure),
                 ExternalFunction(_, func) => self.eval_external_function(cdr, func),
-                Macro(ref parameters, ref body) => self.eval_macro(cdr, parameters.clone(), body.clone())
+                Macro(ref parameters, ref body) => self.eval_macro(cdr, parameters, body.clone())
             },
             _ => Err(format!("Value is not callable: {}", sym_val))
         }
@@ -397,7 +416,7 @@ impl Interpreter {
                               formal_params: &FunctionParameters,
                               body: Rc<reader::Sexp>,
                               closure: &Closure) -> EvalResult {
-        let params = try!(self.eval_list_as_parameters(actual_params));
+        let params = try!(self.sexp_map(actual_params, |s, t| s.eval(t)));
         let actual : &Vec<String> = match *formal_params {
             Fixed(ref vec) => {
                 if params.len() != vec.len() {
@@ -445,7 +464,7 @@ impl Interpreter {
     fn eval_external_function(&mut self,
                               actual_params: &reader::Sexp,
                               func: fn(Vec<Rc<LispValue>>) -> EvalResult) -> EvalResult {
-        match self.eval_list_as_parameters(actual_params) {
+        match self.sexp_map(actual_params, |s, t| s.eval(t)) {
             Ok(v) => func(v),
             Err(e) => Err(e)
         }
@@ -454,24 +473,67 @@ impl Interpreter {
     #[allow(unused_variable)]
     fn eval_macro(&mut self,
                   actual_params: &reader::Sexp,
-                  formal_params: Rc<reader::Sexp>,
+                  formal_params: &FunctionParameters,
                   body: Rc<reader::Sexp>) -> EvalResult {
-        Err("not implemented".to_string())
+        let params = try!(self.sexp_map(actual_params, |s, t| s.eval_quote(t)));
+        let actual : &Vec<String> = match *formal_params {
+            Fixed(ref vec) => {
+                if params.len() != vec.len() {
+                    return Err("Incorrect number of parameters".to_string());
+                }
+                vec
+            },
+            Variadic(ref vec, _) => {
+                if params.len() < vec.len() {
+                    return Err("Incorrect number of parameters".to_string());
+                }
+                vec
+            }
+        };
+        self.environment.enter_scope();
+        for (value, binding) in params.iter().zip(actual.iter()) {
+            self.environment.put(binding.clone(), value.clone());
+        }
+        if let Variadic(_, ref rest) = *formal_params {
+            let rest_as_vector = params.iter().skip(actual.len());
+            let list = self.iter_to_list(rest_as_vector);
+            self.environment.put(rest.clone(), list);
+        }
+        let result = self.eval(body.deref());
+        self.environment.exit_scope();
+        if let Ok(value) = result {
+            let sexp = self.value_to_sexp(value);
+            self.eval(&sexp)
+        } else {
+            result
+        }
+    }
+
+    fn eval_defmacro(&mut self, sexp: &reader::Sexp) -> EvalResult {
+        match *sexp {
+            reader::Cons(box reader::Symbol(ref sym),
+                         box reader::Cons(ref parameters,
+                                          box reader::Cons(ref body,
+                                                           box reader::Nil))) => {
+                let params = self.eval_list_as_parameter_list(&**parameters);
+                let macro = Rc::new(Func(Macro(params, Rc::new(*body.clone()))));
+                self.environment.put_global(sym.clone(), macro.clone());
+                Ok(macro)
+            }
+            _ => Err("Not a legal defmacro pattern".to_string())
+        }
     }
                   
 
-    // This function traverses the Cons linked list and collapses it into a vector by
-    // evaluating everything in the list. Any errors are propegated to the caller.
-    // This is used when evaluating parameters for a function call.
-    fn eval_list_as_parameters(&mut self, params: &reader::Sexp) -> Result<Vec<Rc<LispValue>>, String> {
+    fn sexp_map(&mut self, params: &reader::Sexp, func: |&mut Interpreter, &reader::Sexp| -> EvalResult) -> Result<Vec<Rc<LispValue>>, String> {
         match *params {
             reader::Cons(ref car, ref cdr) => {
                 let mut out_vec = vec![];
-                match self.eval(&**car) {
+                match func(self, &**car) {
                     Ok(v) => out_vec.push(v),
                     Err(e) => return Err(e)
                 };
-                match self.eval_list_as_parameters(&**cdr) {
+                match self.sexp_map(&**cdr, func) {
                     Ok(vec) => {
                         out_vec.extend(vec.into_iter());
                         Ok(out_vec)
@@ -484,6 +546,20 @@ impl Interpreter {
         }
     }
 
+    fn value_to_sexp(&self, value: Rc<LispValue>) -> reader::Sexp {
+        match *value {
+            Int(i) => reader::Int(i),
+            Float(i) => reader::Float(i),
+            Str(ref s) => reader::Str(s.clone()),
+            Bool(b) => reader::Boolean(b),
+            Symbol(ref s) => reader::Symbol(s.clone()),
+            Cons(ref car, ref cdr) => reader::Cons(box self.value_to_sexp(car.clone()),
+                                                   box self.value_to_sexp(cdr.clone())),
+            Nil => reader::Nil,
+            _ => unreachable!()
+        }
+    }
+    
     // The function is similar to eval_list_as_parameters, but it just gets the names
     // of all of the symbols in the linked list instead of evaluating them. This
     // is also used for evaluating parameters for a function call.
