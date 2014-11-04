@@ -29,10 +29,10 @@ impl Environment {
 
     pub fn put(&mut self, key: String, value: Rc<interpreter::LispValue>) {
         let len = self.stack.len();
-        self.stack.get_mut(len - 1).insert(key, value);
+        self.stack[len - 1].insert(key, value);
     }
 
     pub fn put_global(&mut self, key: String, value: Rc<interpreter::LispValue>) {
-        self.stack.get_mut(0).insert(key, value);
+        self.stack[0].insert(key, value);
     }
 }

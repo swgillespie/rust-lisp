@@ -133,14 +133,12 @@ pub type EvalResult = Result<Rc<LispValue>, String>;
 
 pub struct Interpreter {
     environment: environment::Environment,
-    quasiquote_level: uint
 }
 
 impl Interpreter {
     pub fn new() -> Interpreter {
         let mut interpreter = Interpreter {
             environment: environment::Environment::new(),
-            quasiquote_level: 0
         };
         interpreter.load_intrinsics();
         interpreter
@@ -328,7 +326,15 @@ impl Interpreter {
         }
     }
 
-    #[allow(unused_variable)]
+    // algorithm for evaluating a quasiquoted S-expression:
+    // 1) incremenent the quasiquote counter
+    // 2) if the atom isn't a list, evaluate it as a quoted atom and decrement the quasiquote counter.
+    // 3) if the atom is a list...
+    //  a) If the car of the list is unquoted, decrement the quasiquote counter. If the quasiquote
+    //     counter is zero, evaluate the car of the list. If the counter is less than zero, error.
+    //     If the counter is greater than zero, evaluate the car of the list as a quoted atom.
+    //  b) If the car of the list is not quoted, evaluate the car of the list as a quoted atom.
+    //  c) Evaluate the cdr of the list (goto step 2)
     fn eval_quasiquote(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
             reader::Cons(box reader::Cons(box reader::Symbol(ref s), ref quoted), ref cdr) if *s == "unquote".to_string() => {
@@ -344,10 +350,10 @@ impl Interpreter {
                 let result = try!(self.eval(&**quoted));
                 Ok(result)
             }
-            reader::Cons(box reader::Cons(box reader::Symbol(ref s), ref quoted), ref cdr) if *s == "unquote-splicing".to_string() => {
+            reader::Cons(box reader::Cons(box reader::Symbol(ref s), _), _) if *s == "unquote-splicing".to_string() => {
                 Err("Invalid unquote-splicing form".to_string())
             }
-            reader::Cons(box reader::Symbol(ref s), ref quoted) if *s == "unquote-splicing".to_string() => {
+            reader::Cons(box reader::Symbol(ref s), _) if *s == "unquote-splicing".to_string() => {
                 Err("Invalid unquote-splicing form".to_string())
             },
             reader::Cons(ref car, ref cdr) => {
@@ -470,7 +476,6 @@ impl Interpreter {
         }
     }
 
-    #[allow(unused_variable)]
     fn eval_macro(&mut self,
                   actual_params: &reader::Sexp,
                   formal_params: &FunctionParameters,
@@ -502,6 +507,7 @@ impl Interpreter {
         let result = self.eval(body.deref());
         self.environment.exit_scope();
         if let Ok(value) = result {
+            println!("expanded: {}", value);
             let sexp = self.value_to_sexp(value);
             self.eval(&sexp)
         } else {
@@ -643,10 +649,10 @@ mod tests {
         if let Ok(val) = evaluate("(+ 1 2)") {
             match val.deref() {
                 &Int(x) => assert_eq!(x, 3),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -655,10 +661,10 @@ mod tests {
         if let Ok(val) = evaluate("(+ 5 5 5 5 5)") {
             match val.deref() {
                 &Int(x) => assert_eq!(x, 25),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }        
     }
 
@@ -667,10 +673,10 @@ mod tests {
         if let Ok(val) = evaluate("(- 1 2)") {
             match val.deref() {
                 &Int(x) => assert_eq!(x, -1),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -679,10 +685,10 @@ mod tests {
         if let Ok(val) = evaluate("(/ 8 2 2.5)") {
             match val.deref() {
                 &Float(x) => assert_eq!(x, 1.6),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -691,10 +697,10 @@ mod tests {
         if let Ok(val) = evaluate("(- 5 1 1 1)") {
             match val.deref() {
                 &Int(x) => assert_eq!(x, 2),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -703,10 +709,10 @@ mod tests {
         if let Ok(val) = evaluate("(car '(1 2))") {
             match val.deref() {
                 &Int(x) => assert_eq!(x, 1),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -716,12 +722,12 @@ mod tests {
             match val.deref() {
                 &Cons(ref car, _) => match car.deref() {
                     &Int(a) => assert_eq!(a, 2),
-                    _ => fail!("Unexpected: {}", car)
+                    _ => panic!("Unexpected: {}", car)
                 },
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -730,10 +736,10 @@ mod tests {
         if let Ok(val) = evaluate("(if #t 1 2)") {
             match val.deref() {
                 &Int(a) => assert_eq!(a, 1),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
         
     }
@@ -743,10 +749,10 @@ mod tests {
         if let Ok(val) = evaluate("(if #f 1 2)") {
             match val.deref() {
                 &Int(a) => assert_eq!(a, 2),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -755,10 +761,10 @@ mod tests {
         if let Ok(val) = evaluate("(if #t 1)") {
             match val.deref() {
                 &Int(a) => assert_eq!(a, 1),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -767,10 +773,10 @@ mod tests {
         if let Ok(val) = evaluate("(if #f 1)") {
             match val.deref() {
                 &Nil => (),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -781,13 +787,13 @@ mod tests {
             if let Ok(val) = evaluate_with_context("(square 5)", &mut interpreter) {
                 match val.deref() {
                     &Int(v) => assert_eq!(v, 25),
-                    e => fail!("Unexpected: {}", e)
+                    e => panic!("Unexpected: {}", e)
                 }
             } else {
-                fail!("Unexpected error");
+                panic!("Unexpected error");
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -798,13 +804,13 @@ mod tests {
             if let Ok(val) = evaluate_with_context("(fact 5)", &mut interpreter) {
                 match val.deref() {
                     &Int(v) => assert_eq!(v, 120),
-                    e => fail!("Unexpected: {}", e)
+                    e => panic!("Unexpected: {}", e)
                 }
             } else {
-                fail!("Unexpected error");
+                panic!("Unexpected error");
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -813,10 +819,10 @@ mod tests {
         if let Ok(val) = evaluate("(and #f asdfjsldlf)") {
             match val.deref() {
                 &Bool(b) => assert!(!b),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -825,10 +831,10 @@ mod tests {
         if let Ok(val) = evaluate("(or #t asdfjsldlf)") {
             match val.deref() {
                 &Bool(b) => assert!(b),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -837,10 +843,10 @@ mod tests {
         if let Ok(val) = evaluate("(or #f #f)") {
             match val.deref() {
                 &Bool(b) => assert!(!b),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -849,10 +855,10 @@ mod tests {
         if let Ok(val) = evaluate("(and #t #t)") {
             match val.deref() {
                 &Bool(b) => assert!(b),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -861,10 +867,10 @@ mod tests {
         if let Ok(val) = evaluate("((lambda (x) (* x x)) 5)") {
             match val.deref() {
                 &Int(b) => assert_eq!(b, 25),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }        
     }
 
@@ -873,10 +879,10 @@ mod tests {
         if let Ok(val) = evaluate("`,10") {
             match val.deref() {
                 &Int(b) => assert_eq!(b, 10),
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }        
     }
 
@@ -894,16 +900,16 @@ mod tests {
                                     assert_eq!(car_3.deref(), &Int(3));
                                     assert_eq!(cdr_3.deref(), &Nil);
                                 },
-                                e => fail!("Unexpected: {}", e)
+                                e => panic!("Unexpected: {}", e)
                             }
                         },
-                        e => fail!("Unexpected: {}", e)
+                        e => panic!("Unexpected: {}", e)
                     }
                 }
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }        
     }
 
@@ -921,16 +927,16 @@ mod tests {
                                     assert_eq!(car_3.deref(), &Int(4));
                                     assert_eq!(cdr_3.deref(), &Nil);
                                 },
-                                e => fail!("Unexpected: {}", e)
+                                e => panic!("Unexpected: {}", e)
                             }
                         },
-                        e => fail!("Unexpected: {}", e)
+                        e => panic!("Unexpected: {}", e)
                     }
                 }
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }        
     }
 
@@ -948,16 +954,16 @@ mod tests {
                                     assert_eq!(car_3.deref(), &Int(3));
                                     assert_eq!(cdr_3.deref(), &Nil);
                                 },
-                                e => fail!("Unexpected: {}", e)
+                                e => panic!("Unexpected: {}", e)
                             }
                         },
-                        e => fail!("Unexpected: {}", e)
+                        e => panic!("Unexpected: {}", e)
                     }
                 }
-                e => fail!("Unexpected: {}", e)
+                e => panic!("Unexpected: {}", e)
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }        
     }
 
@@ -970,13 +976,13 @@ mod tests {
             if let Ok(val) = evaluate_with_context("(apply (lambda (x) (* x x)) 5)", &mut interpreter) {
                 match val.deref() {
                     &Int(v) => assert_eq!(v, 25),
-                    e => fail!("Unexpected: {}", e)
+                    e => panic!("Unexpected: {}", e)
                 }
             } else {
-                fail!("Unexpected error");
+                panic!("Unexpected error");
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -988,15 +994,15 @@ mod tests {
                 match val.deref() {
                     &Cons(ref left, ref right) => match (left.deref(), right.deref()) {
                         (&Int(a), &Nil) => assert_eq!(a, 2),
-                        e => fail!("Unexpected: {}", e)
+                        e => panic!("Unexpected: {}", e)
                     },
-                    e => fail!("Unexpected: {}", e)
+                    e => panic!("Unexpected: {}", e)
                 }
             } else {
-                fail!("Unexpected error");
+                panic!("Unexpected error");
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -1010,11 +1016,11 @@ mod tests {
                 if let Ok(_) = evaluate_with_context("(fib 4)", &mut interpreter) {
                     ()
                 } else {
-                    fail!("Unexpected error");
+                    panic!("Unexpected error");
                 }
             })
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -1033,11 +1039,11 @@ mod tests {
                 if let Ok(_) = evaluate_with_context("(fact 5)", &mut interpreter) {
                     ()
                 } else {
-                    fail!("Unexpected error");
+                    panic!("Unexpected error");
                 }
             })
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 
@@ -1050,12 +1056,12 @@ mod tests {
                     if let Ok(_) = evaluate_with_context("(reduce + 0 (map (lambda (x) (* x x)) '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25)))", &mut interpreter) {
                         ()
                     } else {
-                        fail!("Unexpected error");
+                        panic!("Unexpected error");
                     }
                 })
             }
         } else {
-            fail!("Unexpected error")
+            panic!("Unexpected error")
         }
     }
 

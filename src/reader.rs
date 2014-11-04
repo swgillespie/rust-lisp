@@ -297,7 +297,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Int(x) => assert_eq!(x, 42),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         };
     }
     
@@ -309,7 +309,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Float(x) => assert_eq!(x, 9.8),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         };
     }
 
@@ -321,7 +321,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Str(x) => assert_eq!(x, "hello world".to_string()),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         };
     }
 
@@ -333,7 +333,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Symbol(x) => assert_eq!(x, "hello".to_string()),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         };
     }
 
@@ -349,7 +349,7 @@ mod tests {
                 assert_eq!(y, 2);
                 assert_eq!(z, 3);
             },
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         };
     }
 
@@ -364,7 +364,7 @@ mod tests {
                 assert_eq!(s, "quote".to_string());
                 assert_eq!(i, 42);
             }
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         };
     }
 
@@ -381,7 +381,7 @@ mod tests {
                 assert_eq!(b, 2);
                 assert_eq!(c, 3);
             }
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         };
     }
 
@@ -397,7 +397,7 @@ mod tests {
                 assert_eq!(a, 1);
                 assert_eq!(b, 2);
             },
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -409,7 +409,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Symbol(s) => assert_eq!(s, "...".to_string()),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -421,7 +421,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Boolean(v) => assert!(v),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -433,7 +433,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Boolean(v) => assert!(!v),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -445,7 +445,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Nil => (),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -457,7 +457,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Cons(box Symbol(ref quote), box Nil) => assert_eq!(*quote, "quote".to_string()),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -469,7 +469,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "quasiquote".to_string()),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -481,7 +481,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "unquote".to_string()),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
 
@@ -493,7 +493,7 @@ mod tests {
         let sexp = result.unwrap();
         match sexp {
             Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "unquote-splicing".to_string()),
-            _ => fail!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {}", sexp)
         }
     }
     
@@ -505,11 +505,11 @@ mod tests {
         assert_eq!(sexp.len(), 2);
         match sexp[0] {
             Cons(box Symbol(ref s), box Nil) => assert_eq!(*s, "hello".to_string()),
-            ref s => fail!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {}", s)
         };
         match sexp[1] {
             Cons(box Symbol(ref s), box Nil) => assert_eq!(*s, "world".to_string()),
-            ref s => fail!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {}", s)
         }
     }
 
@@ -521,11 +521,11 @@ mod tests {
         assert_eq!(sexp.len(), 2);
         match sexp[0] {
             Nil => (),
-            ref s => fail!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {}", s)
         };
         match sexp[1] {
             Nil => (),
-            ref s => fail!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {}", s)
         }
     }
 
@@ -540,14 +540,14 @@ mod tests {
                 assert_eq!(a, 1);
                 assert_eq!(b, 2);
             },
-            ref s => fail!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {}", s)
         };
         match sexp[1] {
             Cons(box Int(a), box Int(b)) => {
                 assert_eq!(a, 3);
                 assert_eq!(b, 4);
             },
-            ref s => fail!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {}", s)
         };
     }
 
