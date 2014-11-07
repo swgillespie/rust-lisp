@@ -154,6 +154,7 @@ impl Interpreter {
         self.expose_external_function("cons".to_string(), intrinsics::cons);
         self.expose_external_function("=".to_string(), intrinsics::eq);
         self.expose_external_function("display".to_string(), intrinsics::display);
+        self.expose_external_function("pair?".to_string(), intrinsics::pair);
     }
 
     pub fn eval(&mut self, sexp: &reader::Sexp) -> EvalResult {

@@ -141,3 +141,15 @@ pub fn display(params: Vec<Rc<LispValue>>) -> EvalResult {
     }
     Ok(Rc::new(Nil))
 }
+
+// pair function - exposed as (pair?) to Lisp.
+pub fn pair(params: Vec<Rc<LispValue>>) -> EvalResult {
+    if params.len() != 1 {
+        return Err("Incorrect number of parameters".to_string())
+    }
+    if let &Cons(_, _) = params[0].deref() {
+        Ok(Rc::new(Bool(true)))
+    } else {
+        Ok(Rc::new(Bool(false)))
+    }
+}
