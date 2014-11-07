@@ -508,7 +508,6 @@ impl Interpreter {
         let result = self.eval(body.deref());
         self.environment.exit_scope();
         if let Ok(value) = result {
-            println!("expanded: {}", value);
             let sexp = self.value_to_sexp(value);
             self.eval(&sexp)
         } else {
