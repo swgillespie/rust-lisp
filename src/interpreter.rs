@@ -1,15 +1,23 @@
-use std::fmt::{Formatter, FormatError, Show};
+#![feature(box_syntax, box_patterns)]
+
+use std::fmt::{self, Error, Formatter};
+
 use std::rc::Rc;
+use std::ops::Deref;
 use std::collections::HashSet;
 
 use reader;
 use intrinsics;
 use environment;
 
+use reader::Sexp;
+
+
+
 // The LispValue enum is the type of all Lisp values at runtime. These are
 // the same as the S-expression representation, except that functions can also
 // be values. LispValues are always used as a reference counted pointer.
-#[deriving(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum LispValue {
     Int(i64),
     Float(f64),
@@ -21,8 +29,8 @@ pub enum LispValue {
     Nil
 }
 
-impl Show for LispValue {
-    fn fmt(&self, fmt: &mut Formatter) -> Result<(), FormatError> {
+impl fmt::Display for LispValue {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
         write!(fmt, "{}", self.pretty_print())
     }
 }
@@ -41,28 +49,28 @@ impl LispValue {
     // the same thing.
     pub fn pretty_print(&self) -> String {
         match *self {
-            Int(v) => v.to_string(),
-            Float(v) => v.to_string(),
-            Str(ref v) => format!("\"{}\"", v),
-            Symbol(ref v) => format!("{}", v),
-            Cons(ref car, ref cdr) => {
+            LispValue::Int(v) => v.to_string(),
+            LispValue::Float(v) => v.to_string(),
+            LispValue::Str(ref v) => format!("\"{}\"", v),
+            LispValue::Symbol(ref v) => format!("{}", v),
+            LispValue::Cons(ref car, ref cdr) => {
                 let (s_car, s_cdr) = self.print_cons(&**car, &**cdr);
                 format!("({} {})", s_car, s_cdr)
             },
-            Nil => "()".to_string(),
-            Bool(v) => if v {
+            LispValue::Nil => "()".to_string(),
+            LispValue::Bool(v) => if v {
                 "#t".to_string()
             } else {
                 "#f".to_string()
             },
-            Func(ref c) => format!("{}", c)
+            LispValue::Func(ref c) => format!("{}", c)
         }
     }
 
     fn print_cons(&self, car: &LispValue, cdr: &LispValue) -> (String, String) {
         let car_str = car.pretty_print();
         let cdr_str = match *cdr {
-            Cons(ref c_car, ref c_cdr) => {
+            LispValue::Cons(ref c_car, ref c_cdr) => {
                 let (s_car, s_cdr) = self.print_cons(&**c_car, &**c_cdr);
                 if s_cdr.len() == 0 {
                     format!("{}", s_car)
@@ -70,13 +78,14 @@ impl LispValue {
                     format!("{} {}", s_car, s_cdr)
                 }
             }
-            Nil => "".to_string(),
+            LispValue::Nil => "".to_string(),
             _ => format!(". {}", cdr.pretty_print())
         };
         (car_str, cdr_str)
     }
 }
 
+#[derive(Debug)]
 pub enum FunctionParameters {
     Fixed(Vec<String>),
     Variadic(Vec<String>, String)
@@ -85,8 +94,8 @@ pub enum FunctionParameters {
 impl FunctionParameters {
     pub fn get_variables(&self) -> Vec<String> {
         match *self {
-            Fixed(ref vec) => vec.clone(),
-            Variadic(ref vec, ref rest) => {
+            FunctionParameters::Fixed(ref vec) => vec.clone(),
+            FunctionParameters::Variadic(ref vec, ref rest) => {
                 let mut temp = vec.clone();
                 temp.push(rest.clone());
                 temp
@@ -101,6 +110,7 @@ type Closure = Vec<(String, Option<Rc<LispValue>>)>;
 // lambda), an external Rust function exposed to the interpreter, or a macro.
 // Macros aren't supported yet.
 #[allow(dead_code)] // macros aren't used yet
+#[derive(Debug)]
 pub enum Function {
     InternalFunction(FunctionParameters, Rc<reader::Sexp>, Closure),
     ExternalFunction(String, fn(Vec<Rc<LispValue>>) -> EvalResult),
@@ -119,12 +129,12 @@ impl PartialEq for Function {
     }
 }
 
-impl Show for Function {
-    fn fmt (&self, fmt: &mut Formatter) -> Result<(), FormatError> {
+impl fmt::Display for Function {
+    fn fmt (&self, fmt: &mut Formatter) -> Result<(), Error> {
         match *self {
-            InternalFunction(_, _, _) => write!(fmt, "<function>"),
-            ExternalFunction(_, _) => write!(fmt, "<external function>"),
-            Macro(_, _) => write!(fmt, "<macro>")
+            Function::InternalFunction(_, _, _) => write!(fmt, "<function>"),
+            Function::ExternalFunction(_, _) => write!(fmt, "<external function>"),
+            Function::Macro(_, _) => write!(fmt, "<macro>")
         }
     }
 }
@@ -159,25 +169,25 @@ impl Interpreter {
 
     pub fn eval(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Int(i) => Ok(Rc::new(Int(i))),
-            reader::Float(f) => Ok(Rc::new(Float(f))),
-            reader::Str(ref s) => Ok(Rc::new(Str(s.clone()))),
-            reader::Symbol(ref s) => self.eval_symbol(s.clone()),
-            reader::Boolean(b) => Ok(Rc::new(Bool(b))),
-            reader::Cons(box reader::Symbol(ref s), ref right) if self.is_intrinsic(s) => self.eval_intrinsic(s, &**right),
-            reader::Cons(ref left, ref right) => self.eval_function(&**left, &**right),
-            reader::Nil => Err("Unknown form ()".to_string()),
+            Sexp::Int(i) => Ok(Rc::new(LispValue::Int(i))),
+            Sexp::Float(f) => Ok(Rc::new(LispValue::Float(f))),
+            Sexp::Str(ref s) => Ok(Rc::new(LispValue::Str(s.clone()))),
+            Sexp::Symbol(ref s) => self.eval_symbol(s.clone()),
+            Sexp::Boolean(b) => Ok(Rc::new(LispValue::Bool(b))),
+            Sexp::Cons(box Sexp::Symbol(ref s), ref right) if self.is_intrinsic(s) => self.eval_intrinsic(s, &**right),
+            Sexp::Cons(ref left, ref right) => self.eval_function(&**left, &**right),
+            Sexp::Nil => Err("Unknown form ()".to_string()),
             _ => unreachable!()
         }
     }
     
     pub fn expose_external_function(&mut self, name: String, func: fn(Vec<Rc<LispValue>>) -> EvalResult) {
-        let wrapped_func = Func(ExternalFunction(name.clone(), func));
+        let wrapped_func = LispValue::Func(Function::ExternalFunction(name.clone(), func));
         self.environment.put(name.clone(), Rc::new(wrapped_func));
     }
 
     fn is_intrinsic(&self, name: &String) -> bool {
-        match name.as_slice() {
+        match name.as_str() {
             "if"
                 | "defun"
                 | "defmacro"
@@ -194,7 +204,7 @@ impl Interpreter {
     }
 
     fn eval_intrinsic(&mut self, name: &String, sexp: &reader::Sexp) -> EvalResult {
-        match name.as_slice() {
+        match name.as_str() {
             "quote" => self.eval_quote(sexp),
             "unquote" => Err("unquote not valid outside of quasiquote form".to_string()),
             "lambda" => self.eval_lambda(sexp),
@@ -215,8 +225,8 @@ impl Interpreter {
         let mut cursor = sexp;
         loop {
             match *cursor {
-                reader::Nil => return Ok(last.unwrap_or(Rc::new(Nil))),
-                reader::Cons(ref car, ref cdr) => {
+                Sexp::Nil => return Ok(last.unwrap_or(Rc::new(LispValue::Nil))),
+                Sexp::Cons(ref car, ref cdr) => {
                     let result = try!(self.eval(&**car));
                     last = Some(result.clone());
                     cursor = &**cdr;
@@ -228,18 +238,18 @@ impl Interpreter {
 
     fn eval_and(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(ref car, ref cdr) => match self.eval(&**car) {
+            Sexp::Cons(ref car, ref cdr) => match self.eval(&**car) {
                 Ok(val) => match val.deref() {
-                    &Bool(false) => Ok(val.clone()),
+                    &LispValue::Bool(false) => Ok(val.clone()),
                     _ => self.eval_and(&**cdr)
                 },
                 Err(e) => Err(e)
             },
-            reader::Nil => Ok(Rc::new(Bool(true))),
+            Sexp::Nil => Ok(Rc::new(LispValue::Bool(true))),
             ref e => match self.eval(e) {
                 Ok(val) => match val.deref() {
-                    &Bool(false) => Ok(val.clone()),
-                    _ => Ok(Rc::new(Bool(true)))
+                    &LispValue::Bool(false) => Ok(val.clone()),
+                    _ => Ok(Rc::new(LispValue::Bool(true)))
                 },
                 Err(e) => Err(e)
             }
@@ -248,19 +258,19 @@ impl Interpreter {
 
     fn eval_or(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(ref car, ref cdr) => match self.eval(&**car) {
+            Sexp::Cons(ref car, ref cdr) => match self.eval(&**car) {
                 Ok(val) => match val.deref() {
-                    &Bool(true) => Ok(val.clone()),
+                    &LispValue::Bool(true) => Ok(val.clone()),
                     _ => self.eval_or(&**cdr)
                 },
                 Err(e) => Err(e)
             },
-            reader::Nil => Ok(Rc::new(Bool(false))),
+            Sexp::Nil => Ok(Rc::new(LispValue::Bool(false))),
             ref e => match self.eval(e) {
                 Ok(val) => match val.deref() {
-                    &Bool(false) => Ok(val.clone()),
-                    &Nil => Ok(Rc::new(Bool(false))),
-                    _ => Ok(Rc::new(Bool(true)))
+                    &LispValue::Bool(false) => Ok(val.clone()),
+                    &LispValue::Nil => Ok(Rc::new(LispValue::Bool(false))),
+                    _ => Ok(Rc::new(LispValue::Bool(true)))
                 },
                 Err(e) => Err(e)
             }
@@ -270,13 +280,13 @@ impl Interpreter {
     fn eval_quote(&mut self, sexp: &reader::Sexp) -> EvalResult {
         fn sexp_to_lvalue(s: &reader::Sexp) -> Rc<LispValue> {
             match *s {
-                reader::Int(i) => Rc::new(Int(i)),
-                reader::Float(i) => Rc::new(Float(i)),
-                reader::Str(ref s) => Rc::new(Str(s.clone())),
-                reader::Symbol(ref s) => Rc::new(Symbol(s.clone())),
-                reader::Boolean(b) => Rc::new(Bool(b)),
-                reader::Cons(ref car, ref cdr) => Rc::new(Cons(sexp_to_lvalue(&**car), sexp_to_lvalue(&**cdr))),
-                reader::Nil => Rc::new(Nil),
+                Sexp::Int(i) => Rc::new(LispValue::Int(i)),
+                Sexp::Float(i) => Rc::new(LispValue::Float(i)),
+                Sexp::Str(ref s) => Rc::new(LispValue::Str(s.clone())),
+                Sexp::Symbol(ref s) => Rc::new(LispValue::Symbol(s.clone())),
+                Sexp::Boolean(b) => Rc::new(LispValue::Bool(b)),
+                Sexp::Cons(ref car, ref cdr) => Rc::new(LispValue::Cons(sexp_to_lvalue(&**car), sexp_to_lvalue(&**cdr))),
+                Sexp::Nil => Rc::new(LispValue::Nil),
                 _ => unreachable!()
             }
         }
@@ -285,23 +295,23 @@ impl Interpreter {
 
     fn eval_if(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(ref condition,
-                         box reader::Cons(ref true_branch,
-                                          box reader::Cons(ref false_branch,
-                                                           box reader::Nil))) => {
+            Sexp::Cons(ref condition,
+                         box Sexp::Cons(ref true_branch,
+                                          box Sexp::Cons(ref false_branch,
+                                                           box Sexp::Nil))) => {
                 let cond = try!(self.eval(&**condition));
-                if let &Bool(false) = cond.deref() {
+                if let &LispValue::Bool(false) = cond.deref() {
                     self.eval(&**false_branch)
                 } else {
                     self.eval(&**true_branch)
                 }
             }
-            reader::Cons(ref condition,
-                         box reader::Cons(ref true_branch,
-                                          box reader::Nil)) => {
+            Sexp::Cons(ref condition,
+                         box Sexp::Cons(ref true_branch,
+                                          box Sexp::Nil)) => {
                 let cond = try!(self.eval(&**condition));
-                if let &Bool(false) = cond.deref() {
-                    Ok(Rc::new(Nil))
+                if let &LispValue::Bool(false) = cond.deref() {
+                    Ok(Rc::new(LispValue::Nil))
                 } else {
                     self.eval(&**true_branch)
                 }
@@ -312,17 +322,17 @@ impl Interpreter {
 
     fn eval_define(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(box reader::Symbol(ref sym), box reader::Cons(ref exp, box reader::Nil)) => {
+            Sexp::Cons(box Sexp::Symbol(ref sym), box Sexp::Cons(ref exp, box Sexp::Nil)) => {
                 let value = try!(self.eval(&**exp));
                 self.environment.put_global(sym.clone(), value.clone());
                 Ok(value)
             }
-            reader::Cons(box reader::Symbol(ref sym), ref exp) => {
+            Sexp::Cons(box Sexp::Symbol(ref sym), ref exp) => {
                 let value = try!(self.eval(&**exp));
                 self.environment.put_global(sym.clone(), value.clone());
                 Ok(value)
             }
-            reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
+            Sexp::Cons(ref other, _) => Err(format!("Not a symbol: {:?}", other)),
             _ => Err(format!("No arguments to define form"))
         }
     }
@@ -338,29 +348,29 @@ impl Interpreter {
     //  c) Evaluate the cdr of the list (goto step 2)
     fn eval_quasiquote(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(box reader::Cons(box reader::Symbol(ref s), ref quoted), ref cdr) if *s == "unquote".to_string() => {
+            Sexp::Cons(box Sexp::Cons(box Sexp::Symbol(ref s), ref quoted), ref cdr) if *s == "unquote".to_string() => {
                 let result = try!(self.eval(&**quoted));
                 let rest = try!(self.eval_quasiquote(&**cdr));
-                Ok(Rc::new(Cons(result, rest)))
+                Ok(Rc::new(LispValue::Cons(result, rest)))
             },
-            reader::Cons(box reader::Symbol(ref s), ref quoted) if *s == "unquote".to_string() => {
+            Sexp::Cons(box Sexp::Symbol(ref s), ref quoted) if *s == "unquote".to_string() => {
                 let result = try!(self.eval(&**quoted));
                 Ok(result)
             },
-            reader::Cons(box reader::Cons(box reader::Symbol(ref s), ref quoted), box reader::Nil) if *s == "unquote-splicing".to_string() => {
+            Sexp::Cons(box Sexp::Cons(box Sexp::Symbol(ref s), ref quoted), box Sexp::Nil) if *s == "unquote-splicing".to_string() => {
                 let result = try!(self.eval(&**quoted));
                 Ok(result)
             }
-            reader::Cons(box reader::Cons(box reader::Symbol(ref s), _), _) if *s == "unquote-splicing".to_string() => {
+            Sexp::Cons(box Sexp::Cons(box Sexp::Symbol(ref s), _), _) if *s == "unquote-splicing".to_string() => {
                 Err("Invalid unquote-splicing form".to_string())
             }
-            reader::Cons(box reader::Symbol(ref s), _) if *s == "unquote-splicing".to_string() => {
+            Sexp::Cons(box Sexp::Symbol(ref s), _) if *s == "unquote-splicing".to_string() => {
                 Err("Invalid unquote-splicing form".to_string())
             },
-            reader::Cons(ref car, ref cdr) => {
+            Sexp::Cons(ref car, ref cdr) => {
                 let result = try!(self.eval_quote(&**car));
                 let rest = try!(self.eval_quasiquote(&**cdr));
-                Ok(Rc::new(Cons(result, rest)))
+                Ok(Rc::new(LispValue::Cons(result, rest)))
             }
             ref val => self.eval_quote(val)
         }
@@ -368,31 +378,31 @@ impl Interpreter {
 
     fn eval_defun(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(box reader::Symbol(ref sym),
-                         box reader::Cons(ref parameters,
-                                          box reader::Cons(ref body,
-                                                           box reader::Nil))) => {
+            Sexp::Cons(box Sexp::Symbol(ref sym),
+                         box Sexp::Cons(ref parameters,
+                                          box Sexp::Cons(ref body,
+                                                           box Sexp::Nil))) => {
                 let params = self.eval_list_as_parameter_list(&**parameters);
                 let free_vars = self.get_free_variables(params.get_variables(), &**body);
                 let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
-                let func = Rc::new(Func(InternalFunction(params, Rc::new(*body.clone()), closure)));
+                let func = Rc::new(LispValue::Func(Function::InternalFunction(params, Rc::new(*body.clone()), closure)));
                 self.environment.put_global(sym.clone(), func.clone());
                 Ok(func)
             }
-            reader::Cons(ref other, _) => Err(format!("Not a symbol: {}", other)),
+            Sexp::Cons(ref other, _) => Err(format!("Not a symbol: {:?}", other)),
             _ => Err("No arguments to defun form".to_string())
         }
     }
 
     fn eval_lambda(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(ref parameters,
-                         box reader::Cons(ref body,
-                                          box reader::Nil)) => {
+            Sexp::Cons(ref parameters,
+                         box Sexp::Cons(ref body,
+                                          box Sexp::Nil)) => {
                 let params = self.eval_list_as_parameter_list(&**parameters);
                 let free_vars = self.get_free_variables(params.get_variables(), &**body);
                 let closure = free_vars.into_iter().map(|x| (x.clone(), self.environment.get(x.clone()).clone())).collect();
-                let func = Func(InternalFunction(params, Rc::new(*body.clone()), closure));
+                let func = LispValue::Func(Function::InternalFunction(params, Rc::new(*body.clone()), closure));
                 Ok(Rc::new(func))
             }
             _ => Err("Incorrect pattern for lambda form".to_string())
@@ -409,10 +419,10 @@ impl Interpreter {
     fn eval_function(&mut self, car: &reader::Sexp, cdr: &reader::Sexp) -> EvalResult {
         let sym_val = try!(self.eval(car));
         match *sym_val {
-            Func(ref f) => match *f {
-                InternalFunction(ref parameters, ref body, ref closure) => self.eval_internal_function(cdr, parameters, body.clone(), closure),
-                ExternalFunction(_, func) => self.eval_external_function(cdr, func),
-                Macro(ref parameters, ref body) => self.eval_macro(cdr, parameters, body.clone())
+            LispValue::Func(ref f) => match *f {
+                Function::InternalFunction(ref parameters, ref body, ref closure) => self.eval_internal_function(cdr, parameters, body.clone(), closure),
+                Function::ExternalFunction(_, func) => self.eval_external_function(cdr, func),
+                Function::Macro(ref parameters, ref body) => self.eval_macro(cdr, parameters, body.clone())
             },
             _ => Err(format!("Value is not callable: {}", sym_val))
         }
@@ -425,13 +435,13 @@ impl Interpreter {
                               closure: &Closure) -> EvalResult {
         let params = try!(self.sexp_map(actual_params, |s, t| s.eval(t)));
         let actual : &Vec<String> = match *formal_params {
-            Fixed(ref vec) => {
+            FunctionParameters::Fixed(ref vec) => {
                 if params.len() != vec.len() {
                     return Err("Incorrect number of parameters".to_string());
                 }
                 vec
             },
-            Variadic(ref vec, _) => {
+            FunctionParameters::Variadic(ref vec, _) => {
                 if params.len() < vec.len() {
                     return Err("Incorrect number of parameters".to_string());
                 }
@@ -442,7 +452,7 @@ impl Interpreter {
         for (value, binding) in params.iter().zip(actual.iter()) {
             self.environment.put(binding.clone(), value.clone());
         }
-        if let Variadic(_, ref rest) = *formal_params {
+        if let FunctionParameters::Variadic(_, ref rest) = *formal_params {
             let rest_as_vector = params.iter().skip(actual.len());
             let list = self.iter_to_list(rest_as_vector);
             self.environment.put(rest.clone(), list);
@@ -461,10 +471,13 @@ impl Interpreter {
         result
     }
 
-    fn iter_to_list<'a, T: Iterator<&'a Rc<LispValue>>>(&mut self, mut iter: T) -> Rc<LispValue> {
+    fn iter_to_list<'a,
+                    T: Iterator<Item = &'a Rc<LispValue>>
+                    >(&mut self, mut iter: T) -> Rc<LispValue>
+    {
         match iter.next() {
-            Some(v) => Rc::new(Cons(v.clone(), self.iter_to_list(iter))),
-            None => Rc::new(Nil)
+            Some(v) => Rc::new(LispValue::Cons(v.clone(), self.iter_to_list(iter))),
+            None => Rc::new(LispValue::Nil)
         }
     }
 
@@ -483,13 +496,13 @@ impl Interpreter {
                   body: Rc<reader::Sexp>) -> EvalResult {
         let params = try!(self.sexp_map(actual_params, |s, t| s.eval_quote(t)));
         let actual : &Vec<String> = match *formal_params {
-            Fixed(ref vec) => {
+            FunctionParameters::Fixed(ref vec) => {
                 if params.len() != vec.len() {
                     return Err("Incorrect number of parameters".to_string());
                 }
                 vec
             },
-            Variadic(ref vec, _) => {
+            FunctionParameters::Variadic(ref vec, _) => {
                 if params.len() < vec.len() {
                     return Err("Incorrect number of parameters".to_string());
                 }
@@ -500,7 +513,7 @@ impl Interpreter {
         for (value, binding) in params.iter().zip(actual.iter()) {
             self.environment.put(binding.clone(), value.clone());
         }
-        if let Variadic(_, ref rest) = *formal_params {
+        if let FunctionParameters::Variadic(_, ref rest) = *formal_params {
             let rest_as_vector = params.iter().skip(actual.len());
             let list = self.iter_to_list(rest_as_vector);
             self.environment.put(rest.clone(), list);
@@ -517,23 +530,26 @@ impl Interpreter {
 
     fn eval_defmacro(&mut self, sexp: &reader::Sexp) -> EvalResult {
         match *sexp {
-            reader::Cons(box reader::Symbol(ref sym),
-                         box reader::Cons(ref parameters,
-                                          box reader::Cons(ref body,
-                                                           box reader::Nil))) => {
+            Sexp::Cons(box Sexp::Symbol(ref sym),
+                         box Sexp::Cons(ref parameters,
+                                          box Sexp::Cons(ref body,
+                                                           box Sexp::Nil))) => {
                 let params = self.eval_list_as_parameter_list(&**parameters);
-                let macro = Rc::new(Func(Macro(params, Rc::new(*body.clone()))));
-                self.environment.put_global(sym.clone(), macro.clone());
-                Ok(macro)
+                let macro_thing = Rc::new(LispValue::Func(Function::Macro(params, Rc::new(*body.clone()))));
+                self.environment.put_global(sym.clone(), macro_thing.clone());
+                Ok(macro_thing)
             }
             _ => Err("Not a legal defmacro pattern".to_string())
         }
     }
-                  
 
-    fn sexp_map(&mut self, params: &reader::Sexp, func: |&mut Interpreter, &reader::Sexp| -> EvalResult) -> Result<Vec<Rc<LispValue>>, String> {
+    fn sexp_map<F>(&mut self, params: &reader::Sexp,
+                func: F
+    ) -> Result<Vec<Rc<LispValue>>, String>
+        where F: for<'a> Fn(&'a mut Interpreter, &'a Sexp) -> EvalResult
+    {
         match *params {
-            reader::Cons(ref car, ref cdr) => {
+            Sexp::Cons(ref car, ref cdr) => {
                 let mut out_vec = vec![];
                 match func(self, &**car) {
                     Ok(v) => out_vec.push(v),
@@ -547,21 +563,21 @@ impl Interpreter {
                     Err(e) => Err(e)
                 }
             }
-            reader::Nil => Ok(vec![]),
+            Sexp::Nil => Ok(vec![]),
             _ => Err("Cannot use an improper list as parameters to a function".to_string())
         }
     }
 
     fn value_to_sexp(&self, value: Rc<LispValue>) -> reader::Sexp {
         match *value {
-            Int(i) => reader::Int(i),
-            Float(i) => reader::Float(i),
-            Str(ref s) => reader::Str(s.clone()),
-            Bool(b) => reader::Boolean(b),
-            Symbol(ref s) => reader::Symbol(s.clone()),
-            Cons(ref car, ref cdr) => reader::Cons(box self.value_to_sexp(car.clone()),
+            LispValue::Int(i) => Sexp::Int(i),
+            LispValue::Float(i) => Sexp::Float(i),
+            LispValue::Str(ref s) => Sexp::Str(s.clone()),
+            LispValue::Bool(b) => Sexp::Boolean(b),
+            LispValue::Symbol(ref s) => Sexp::Symbol(s.clone()),
+            LispValue::Cons(ref car, ref cdr) => Sexp::Cons(box self.value_to_sexp(car.clone()),
                                                    box self.value_to_sexp(cdr.clone())),
-            Nil => reader::Nil,
+            LispValue::Nil => Sexp::Nil,
             _ => unreachable!()
         }
     }
@@ -575,40 +591,40 @@ impl Interpreter {
         let mut out_rest = None;
         loop {
             match *cursor {
-                reader::Cons(box reader::Symbol(ref s), box reader::Symbol(ref rest)) => {
+                Sexp::Cons(box Sexp::Symbol(ref s), box Sexp::Symbol(ref rest)) => {
                     out.push(s.clone());
                     out_rest = Some(rest.clone());
                     break;
                 },
-                reader::Cons(box reader::Symbol(ref s), ref cdr) => {
+                Sexp::Cons(box Sexp::Symbol(ref s), ref cdr) => {
                     out.push(s.clone());
                     cursor = &**cdr;
                 },
-                reader::Nil => break,
+                Sexp::Nil => break,
                 _ => unreachable!()
             };
         }
         if out_rest.is_some() {
-            Variadic(out, out_rest.unwrap())
+            FunctionParameters::Variadic(out, out_rest.unwrap())
         } else {
-            Fixed(out)
+            FunctionParameters::Fixed(out)
         }
     }
 
-    fn get_free_variables(&self, variables: Vec<String>, body: &reader::Sexp) -> Vec<String> {
+    fn get_free_variables(&self, variables: Vec<String>, body: &Sexp) -> Vec<String> {
         let parameter_set : HashSet<String> = variables.iter().map(|&ref x| x.clone()).collect();
         let variable_set : HashSet<String> = self.get_variables(body);
         variable_set.difference(&parameter_set).map(|&ref x| x.clone()).collect()
     }
 
-    fn get_variables(&self, body: &reader::Sexp) -> HashSet<String> {
+    fn get_variables(&self, body: &Sexp) -> HashSet<String> {
         match *body {
-            reader::Symbol(ref s) if !self.is_intrinsic(s) => {
+            Sexp::Symbol(ref s) if !self.is_intrinsic(s) => {
                 let mut set = HashSet::new();
                 set.insert(s.clone());
                 set
             },
-            reader::Cons(ref car, ref cdr) => {
+            Sexp::Cons(ref car, ref cdr) => {
                 let free_car = self.get_variables(&**car);
                 let free_cdr = self.get_variables(&**cdr);
                 free_car.union(&free_cdr).map(|&ref x| x.clone()).collect()
@@ -623,10 +639,11 @@ impl Interpreter {
 mod tests {
     extern crate test;
 
-    use self::test::Bencher;
     use super::*;
+    use self::test::Bencher;
+
     use super::super::reader;
-    use std::io::Command;
+    use std::process::Command;
 
     fn evaluate(input: &'static str) -> EvalResult {
         let mut interpreter = Interpreter::new();
@@ -648,7 +665,7 @@ mod tests {
     fn test_addition() {
         if let Ok(val) = evaluate("(+ 1 2)") {
             match val.deref() {
-                &Int(x) => assert_eq!(x, 3),
+                &LispValue::Int(x) => assert_eq!(x, 3),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -660,7 +677,7 @@ mod tests {
     fn test_varargs_addition() {
         if let Ok(val) = evaluate("(+ 5 5 5 5 5)") {
             match val.deref() {
-                &Int(x) => assert_eq!(x, 25),
+                &LispValue::Int(x) => assert_eq!(x, 25),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -672,7 +689,7 @@ mod tests {
     fn test_subtraction() {
         if let Ok(val) = evaluate("(- 1 2)") {
             match val.deref() {
-                &Int(x) => assert_eq!(x, -1),
+                &LispValue::Int(x) => assert_eq!(x, -1),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -684,7 +701,7 @@ mod tests {
     fn test_division() {
         if let Ok(val) = evaluate("(/ 8 2 2.5)") {
             match val.deref() {
-                &Float(x) => assert_eq!(x, 1.6),
+                &LispValue::Float(x) => assert_eq!(x, 1.6),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -696,7 +713,7 @@ mod tests {
     fn test_varargs_subtraction() {
         if let Ok(val) = evaluate("(- 5 1 1 1)") {
             match val.deref() {
-                &Int(x) => assert_eq!(x, 2),
+                &LispValue::Int(x) => assert_eq!(x, 2),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -708,7 +725,7 @@ mod tests {
     fn test_car() {
         if let Ok(val) = evaluate("(car '(1 2))") {
             match val.deref() {
-                &Int(x) => assert_eq!(x, 1),
+                &LispValue::Int(x) => assert_eq!(x, 1),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -720,8 +737,8 @@ mod tests {
     fn test_cdr() {
         if let Ok(val) = evaluate("(cdr '(1 2))") {
             match val.deref() {
-                &Cons(ref car, _) => match car.deref() {
-                    &Int(a) => assert_eq!(a, 2),
+                &LispValue::Cons(ref car, _) => match car.deref() {
+                    &LispValue::Int(a) => assert_eq!(a, 2),
                     _ => panic!("Unexpected: {}", car)
                 },
                 e => panic!("Unexpected: {}", e)
@@ -735,7 +752,7 @@ mod tests {
     fn test_if_true() {
         if let Ok(val) = evaluate("(if #t 1 2)") {
             match val.deref() {
-                &Int(a) => assert_eq!(a, 1),
+                &LispValue::Int(a) => assert_eq!(a, 1),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -748,7 +765,7 @@ mod tests {
     fn test_if_false() {
         if let Ok(val) = evaluate("(if #f 1 2)") {
             match val.deref() {
-                &Int(a) => assert_eq!(a, 2),
+                &LispValue::Int(a) => assert_eq!(a, 2),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -760,7 +777,7 @@ mod tests {
     fn test_if_true_no_false_branch() {
         if let Ok(val) = evaluate("(if #t 1)") {
             match val.deref() {
-                &Int(a) => assert_eq!(a, 1),
+                &LispValue::Int(a) => assert_eq!(a, 1),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -772,7 +789,7 @@ mod tests {
     fn test_if_false_no_false_branch() {
         if let Ok(val) = evaluate("(if #f 1)") {
             match val.deref() {
-                &Nil => (),
+                &LispValue::Nil => (),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -786,7 +803,7 @@ mod tests {
         if let Ok(_) = evaluate_with_context("(defun square (x) (* x x))", &mut interpreter) {
             if let Ok(val) = evaluate_with_context("(square 5)", &mut interpreter) {
                 match val.deref() {
-                    &Int(v) => assert_eq!(v, 25),
+                    &LispValue::Int(v) => assert_eq!(v, 25),
                     e => panic!("Unexpected: {}", e)
                 }
             } else {
@@ -803,7 +820,7 @@ mod tests {
         if let Ok(_) = evaluate_with_context("(defun fact (n) (if (= n 0) 1 (* n (fact (- n 1)))))", &mut interpreter) {
             if let Ok(val) = evaluate_with_context("(fact 5)", &mut interpreter) {
                 match val.deref() {
-                    &Int(v) => assert_eq!(v, 120),
+                    &LispValue::Int(v) => assert_eq!(v, 120),
                     e => panic!("Unexpected: {}", e)
                 }
             } else {
@@ -818,7 +835,7 @@ mod tests {
     fn test_and_short_circuit() {
         if let Ok(val) = evaluate("(and #f asdfjsldlf)") {
             match val.deref() {
-                &Bool(b) => assert!(!b),
+                &LispValue::Bool(b) => assert!(!b),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -830,7 +847,7 @@ mod tests {
     fn test_or_short_circuit() {
         if let Ok(val) = evaluate("(or #t asdfjsldlf)") {
             match val.deref() {
-                &Bool(b) => assert!(b),
+                &LispValue::Bool(b) => assert!(b),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -842,7 +859,7 @@ mod tests {
     fn test_or() {
         if let Ok(val) = evaluate("(or #f #f)") {
             match val.deref() {
-                &Bool(b) => assert!(!b),
+                &LispValue::Bool(b) => assert!(!b),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -854,7 +871,7 @@ mod tests {
     fn test_and() {
         if let Ok(val) = evaluate("(and #t #t)") {
             match val.deref() {
-                &Bool(b) => assert!(b),
+                &LispValue::Bool(b) => assert!(b),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -866,7 +883,7 @@ mod tests {
     fn test_lambda() {
         if let Ok(val) = evaluate("((lambda (x) (* x x)) 5)") {
             match val.deref() {
-                &Int(b) => assert_eq!(b, 25),
+                &LispValue::Int(b) => assert_eq!(b, 25),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -878,7 +895,7 @@ mod tests {
     fn test_atom_quasiquote_unquote() {
         if let Ok(val) = evaluate("`,10") {
             match val.deref() {
-                &Int(b) => assert_eq!(b, 10),
+                &LispValue::Int(b) => assert_eq!(b, 10),
                 e => panic!("Unexpected: {}", e)
             }
         } else {
@@ -890,15 +907,15 @@ mod tests {
     fn test_quasiquote_with_no_unquote() {
         if let Ok(val) = evaluate("`(1 2 3)") {
             match val.deref() {
-                &Cons(ref car, ref cdr) => {
-                    assert_eq!(car.deref(), &Int(1));
+                &LispValue::Cons(ref car, ref cdr) => {
+                    assert_eq!(car.deref(), &LispValue::Int(1));
                     match cdr.deref() {
-                        &Cons(ref car_2, ref cdr_2) => {
-                            assert_eq!(car_2.deref(), &Int(2));
+                        &LispValue::Cons(ref car_2, ref cdr_2) => {
+                            assert_eq!(car_2.deref(), &LispValue::Int(2));
                             match cdr_2.deref() {
-                                &Cons(ref car_3, ref cdr_3) => {
-                                    assert_eq!(car_3.deref(), &Int(3));
-                                    assert_eq!(cdr_3.deref(), &Nil);
+                                &LispValue::Cons(ref car_3, ref cdr_3) => {
+                                    assert_eq!(car_3.deref(), &LispValue::Int(3));
+                                    assert_eq!(cdr_3.deref(), &LispValue::Nil);
                                 },
                                 e => panic!("Unexpected: {}", e)
                             }
@@ -917,15 +934,15 @@ mod tests {
     fn test_quasiquote_with_unquote() {
         if let Ok(val) = evaluate("`(1 2 ,(* 2 2))") {
             match val.deref() {
-                &Cons(ref car, ref cdr) => {
-                    assert_eq!(car.deref(), &Int(1));
+                &LispValue::Cons(ref car, ref cdr) => {
+                    assert_eq!(car.deref(), &LispValue::Int(1));
                     match cdr.deref() {
-                        &Cons(ref car_2, ref cdr_2) => {
-                            assert_eq!(car_2.deref(), &Int(2));
+                        &LispValue::Cons(ref car_2, ref cdr_2) => {
+                            assert_eq!(car_2.deref(), &LispValue::Int(2));
                             match cdr_2.deref() {
-                                &Cons(ref car_3, ref cdr_3) => {
-                                    assert_eq!(car_3.deref(), &Int(4));
-                                    assert_eq!(cdr_3.deref(), &Nil);
+                                &LispValue::Cons(ref car_3, ref cdr_3) => {
+                                    assert_eq!(car_3.deref(), &LispValue::Int(4));
+                                    assert_eq!(cdr_3.deref(), &LispValue::Nil);
                                 },
                                 e => panic!("Unexpected: {}", e)
                             }
@@ -944,15 +961,15 @@ mod tests {
     fn test_quasiquote_with_unquote_splicing() {
         if let Ok(val) = evaluate("`(1 ,@'(2 3))") {
             match val.deref() {
-                &Cons(ref car, ref cdr) => {
-                    assert_eq!(car.deref(), &Int(1));
+                &LispValue::Cons(ref car, ref cdr) => {
+                    assert_eq!(car.deref(), &LispValue::Int(1));
                     match cdr.deref() {
-                        &Cons(ref car_2, ref cdr_2) => {
-                            assert_eq!(car_2.deref(), &Int(2));
+                        &LispValue::Cons(ref car_2, ref cdr_2) => {
+                            assert_eq!(car_2.deref(), &LispValue::Int(2));
                             match cdr_2.deref() {
-                                &Cons(ref car_3, ref cdr_3) => {
-                                    assert_eq!(car_3.deref(), &Int(3));
-                                    assert_eq!(cdr_3.deref(), &Nil);
+                                &LispValue::Cons(ref car_3, ref cdr_3) => {
+                                    assert_eq!(car_3.deref(), &LispValue::Int(3));
+                                    assert_eq!(cdr_3.deref(), &LispValue::Nil);
                                 },
                                 e => panic!("Unexpected: {}", e)
                             }
@@ -975,7 +992,7 @@ mod tests {
         if let Ok(_) = evaluate_with_context("(defun apply (f x) (f x))", &mut interpreter) {
             if let Ok(val) = evaluate_with_context("(apply (lambda (x) (* x x)) 5)", &mut interpreter) {
                 match val.deref() {
-                    &Int(v) => assert_eq!(v, 25),
+                    &LispValue::Int(v) => assert_eq!(v, 25),
                     e => panic!("Unexpected: {}", e)
                 }
             } else {
@@ -992,9 +1009,9 @@ mod tests {
         if let Ok(_) = evaluate_with_context("(defun test-thing (first . rest) rest)", &mut interpreter) {
             if let Ok(val) = evaluate_with_context("(test-thing 1 2)", &mut interpreter) {
                 match val.deref() {
-                    &Cons(ref left, ref right) => match (left.deref(), right.deref()) {
-                        (&Int(a), &Nil) => assert_eq!(a, 2),
-                        e => panic!("Unexpected: {}", e)
+                    &LispValue::Cons(ref left, ref right) => match (left.deref(), right.deref()) {
+                        (&LispValue::Int(a), &LispValue::Nil) => assert_eq!(a, 2),
+                        e => panic!("Unexpected: {:?}", e)
                     },
                     e => panic!("Unexpected: {}", e)
                 }
@@ -1068,7 +1085,7 @@ mod tests {
     #[bench]
     fn rust_first_25_squares(b: &mut Bencher) {
         b.iter(|| {
-            let vec = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25i];
+            let vec = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25isize];
             test::black_box(vec.iter().map(|x| *x * *x).fold(0, |a, b| a + b));
         })
     }
@@ -1076,14 +1093,18 @@ mod tests {
     #[bench]
     fn python_first_25_squares(b: &mut Bencher) {
         b.iter(|| {
-            Command::new("python").arg("-c").arg("print reduce(lambda x, y: x + y, map(lambda x: x * x, range(1, 25)))")
+            let mut c = Command::new("python");
+            c.arg("-c").arg("print reduce(lambda x, y: x + y, map(lambda x: x * x, range(1, 25)))");
+            c
         })
     }
 
     #[bench]
     fn ruby_first_25_squares(b: &mut Bencher) {
         b.iter(|| {
-            Command::new("ruby").arg("'e").arg("puts (1..25).to_a.map { |x| x * x } .reduce(:+)")
+            let mut c = Command::new("ruby");
+            c.arg("'e").arg("puts (1..25).to_a.map { |x| x * x } .reduce(:+)");
+            c
         })
     }
 }

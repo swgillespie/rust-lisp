@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use interpreter;
 
+#[derive(Debug)]
 pub struct Environment {
     stack: Vec<HashMap<String, Rc<interpreter::LispValue>>>
 }
@@ -23,8 +24,8 @@ impl Environment {
     }
 
     pub fn get(&mut self, key: String) -> Option<Rc<interpreter::LispValue>> {
-        self.stack[self.stack.len() - 1].find_copy(&key)
-            .or(self.stack[0].find_copy(&key))
+        self.stack[self.stack.len() - 1].get(&key).cloned() // find_copy(&key)
+            .or(self.stack[0].get(&key).cloned()) // find_copy(&key))
     }
 
     pub fn put(&mut self, key: String, value: Rc<interpreter::LispValue>) {
