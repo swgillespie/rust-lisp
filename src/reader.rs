@@ -1,10 +1,13 @@
-use std::io::{BufReader, BufferedReader, Reader};
+// use std::io::{BufReader, BufferedReader, Reader};
+use std::io::{self, Read, BufReader};
+
+use std::fmt;
 
 // This data structure is the output of the reading phase of the interpreter.
 // An S-expression is composed of either an integer, a float, a string, a symbol,
 // or a list. A list has a pointer to the head (car) of its values, and a pointer
 // to the rest of the list (cdr).
-#[deriving(Show, Clone)]
+#[derive(Debug, Clone)]
 pub enum Sexp {
     Int(i64),
     Float(f64),
@@ -31,11 +34,11 @@ impl SexpReader {
         }
     }
 
-    pub fn parse_all<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> Result<Vec<Sexp>, String> {
+    pub fn parse_all<T: Read>(&mut self, reader: &mut BufReader<T>) -> Result<Vec<Sexp>, String> {
         let mut out = vec![];
         loop {
             match self.parse(reader) {
-                Ok(NoMatch) => break,
+                Ok(Sexp::NoMatch) => break,
                 Err(v) => return Err(v),
                 Ok(v) => out.push(v)
             }
@@ -46,19 +49,21 @@ impl SexpReader {
     
     // Top-level parse of an S-expression. The empty string is parsed as
     // a Nil.
-    pub fn parse<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    pub fn parse<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         match self.get_char(reader, true) {
-            Some(c) => match c {
-                '\'' => self.parse_quoted_sexp(reader),
-                ','  => self.parse_unquoted_sexp(reader),
-                '`'  => self.parse_quasiquoted_sexp(reader),
-                '('  => self.parse_list(reader),
-                _    => {
-                    self.unget_char(c);
-                    self.parse_atom(reader)
+            Some(c) => {
+                match c {
+                    '\'' => self.parse_quoted_sexp(reader),
+                    ','  => self.parse_unquoted_sexp(reader),
+                    '`'  => self.parse_quasiquoted_sexp(reader),
+                    '('  => self.parse_list(reader),
+                    _    => {
+                        self.unget_char(c);
+                        self.parse_atom(reader)
+                    }
                 }
             },
-            None => Ok(NoMatch)
+            None => Ok(Sexp::NoMatch)
         }
     }
 
@@ -67,49 +72,49 @@ impl SexpReader {
     #[allow(dead_code)]
     pub fn parse_str(&mut self, string: &str) -> ReadResult {
         let reader = BufReader::new(string.as_bytes());
-        let mut buf_reader = BufferedReader::new(reader);
+        let mut buf_reader = BufReader::new(reader);
         self.parse(&mut buf_reader)
     }
 
     pub fn parse_str_all(&mut self, string: &str) -> Result<Vec<Sexp>, String> {
         let reader = BufReader::new(string.as_bytes());
-        let mut buf_reader = BufferedReader::new(reader);
+        let mut buf_reader = BufReader::new(reader);
         self.parse_all(&mut buf_reader)
     }
 
-    fn parse_quoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_quoted_sexp<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         let cdr = try!(self.parse(reader));
-        let new_sexp = Cons(box Symbol("quote".to_string()), box cdr);
+        let new_sexp = Sexp::Cons(box Sexp::Symbol("quote".to_string()), box cdr);
         Ok(new_sexp)
     }
 
-    fn parse_unquoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_unquoted_sexp<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         match self.peek_char(reader, true) {
             Some('@') => {
                 let _ = self.get_char(reader, true);
                 let cdr = try!(self.parse(reader));
-                let new_sexp = Cons(box Symbol("unquote-splicing".to_string()), box cdr);
+                let new_sexp = Sexp::Cons(box Sexp::Symbol("unquote-splicing".to_string()), box cdr);
                 Ok(new_sexp)
             },
             _ => {
                 let cdr = try!(self.parse(reader));
-                let new_sexp = Cons(box Symbol("unquote".to_string()), box cdr);
+                let new_sexp = Sexp::Cons(box Sexp::Symbol("unquote".to_string()), box cdr);
                 Ok(new_sexp)
             }
         }
     }
 
-    fn parse_quasiquoted_sexp<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_quasiquoted_sexp<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         let cdr = try!(self.parse(reader));
-        let new_sexp = Cons(box Symbol("quasiquote".to_string()), box cdr);
+        let new_sexp = Sexp::Cons(box Sexp::Symbol("quasiquote".to_string()), box cdr);
         Ok(new_sexp)
     }
 
-    fn parse_list<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_list<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         let car = match self.parse(reader) {
             Ok(value) => value,
             Err(e) => match self.get_char(reader, true) {
-                Some(')') => return Ok(Nil),
+                Some(')') => return Ok(Sexp::Nil),
                 _ => return Err(e)
             }
         };
@@ -138,14 +143,14 @@ impl SexpReader {
             None => return Err("Unexpected EOF, expected . or atom".to_string())
         };
 
-        Ok(Cons(box car, box cdr))
+        Ok(Sexp::Cons(box car, box cdr))
     }
 
-    fn parse_atom<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_atom<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         match self.peek_char(reader, true) {
             Some(c) => match c {
                 '\"' => self.parse_string_literal(reader),
-                c if c.is_digit() => self.parse_number(reader),
+                c if c.is_digit(10) => self.parse_number(reader),
                 '#' => self.parse_boolean(reader),
                 _ => self.parse_symbol(reader)
             },
@@ -153,19 +158,19 @@ impl SexpReader {
         }
     }
 
-    fn parse_boolean<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_boolean<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         let _ = self.get_char(reader, true);
         match self.get_char(reader, false) {
             Some(e) => match e {
-                't' => Ok(Boolean(true)),
-                'f' => Ok(Boolean(false)),
+                't' => Ok(Sexp::Boolean(true)),
+                'f' => Ok(Sexp::Boolean(false)),
                 _ => Err(format!("Unknown boolean literal, got {}", e))
             },
             None => Err("Unexpected EOF while scanning boolean literal".to_string())
         }
     }
 
-    fn parse_string_literal<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_string_literal<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         let _ = self.get_char(reader, false);
         let mut string = "".to_string();
         loop {
@@ -182,10 +187,10 @@ impl SexpReader {
                 None => return Err("Unexpected EOF while scanning string literal".to_string())
             }
         }
-        Ok(Str(string))
+        Ok(Sexp::Str(string))
     }
 
-    fn parse_escape_char<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> Option<char> {
+    fn parse_escape_char<T: Read>(&mut self, reader: &mut BufReader<T>) -> Option<char> {
         match self.get_char(reader, false) {
             Some(e) => match e {
                 '\"' => Some('\"'),
@@ -200,7 +205,7 @@ impl SexpReader {
         }
     }
 
-    fn parse_number<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_number<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         let mut is_double = false;
         let mut string = "".to_string();
         loop {
@@ -210,7 +215,7 @@ impl SexpReader {
                     is_double = true;
                     string.push(e);
                 }
-                Some(e) if e.is_digit() => string.push(e),
+                Some(e) if e.is_digit(10) => string.push(e),
                 Some(e) => {
                     self.unget_char(e);
                     break;
@@ -219,15 +224,26 @@ impl SexpReader {
             }
         }
         if is_double {
-            Ok(Float(from_str::<f64>(string.as_slice()).unwrap()))
+            Ok(Sexp::Float(
+                string.parse::<f64>().unwrap()
+            ))
         } else {
-            Ok(Int(from_str::<i64>(string.as_slice()).unwrap()))
+            Ok(Sexp::Int(
+                string.parse::<i64>().unwrap()
+            ))
         }
     }
 
-    fn parse_symbol<T: Reader>(&mut self, reader: &mut BufferedReader<T>) -> ReadResult {
+    fn parse_symbol<T: Read>(&mut self, reader: &mut BufReader<T>) -> ReadResult {
         let mut symbol = match self.peek_char(reader, false) {
-            Some(e) if self.is_valid_for_identifier(e) => String::from_char(1, self.get_char(reader, false).unwrap()),
+            Some(e) if self.is_valid_for_identifier(e) => {
+                let ch = self.get_char(reader, false).unwrap();
+                let mut s = String::new();
+                s.push(ch);
+                // Workaround to replace convertion from char to string
+                // String::from_char(1, self.get_char(reader, false).unwrap())
+                s
+            },
             Some(e) => {
                 return Err(format!("Unexpected character: got {}, expected an atom", e))
             },
@@ -243,7 +259,7 @@ impl SexpReader {
                 None => break
             }
         }
-        Ok(Symbol(symbol))
+        Ok(Sexp::Symbol(symbol))
     }
 
     fn is_valid_for_identifier(&self, c: char) -> bool {
@@ -255,17 +271,30 @@ impl SexpReader {
         }
     }
 
-    fn get_char<T: Reader>(&mut self, reader: &mut BufferedReader<T>, skip_whitespace: bool) -> Option<char> {
+    fn get_char<T: Read>(&mut self, reader: &mut BufReader<T>, skip_whitespace: bool) -> Option<char> {
         loop {
             match self.unget_stack.pop() {
-                Some(e) if !e.is_whitespace() || !skip_whitespace => return Some(e),
+                Some(e) if !e.is_whitespace() || !skip_whitespace =>
+                {
+                    return Some(e)
+                },
                 Some(_) => continue,
                 None => ()
             };
-            match reader.read_char() {
-                Ok(c) if !c.is_whitespace() || !skip_whitespace => return Some(c),
-                Ok(_)  => (),
-                Err(_) => return None
+
+            // Workaround to replace `reader.read_char()`
+            let mut one_char_buffer = [0];
+            let n_bytes_read = reader.read(&mut one_char_buffer);
+            match n_bytes_read {
+                Ok(n) if n > 0 => {},
+                Ok(n) => return None,
+                Err(e) => return None
+            };
+            let ch = one_char_buffer[0] as char;
+
+            match ch {
+                c if !c.is_whitespace() || !skip_whitespace => return Some(c),
+                _  => (),
             };
         }
     }
@@ -274,7 +303,7 @@ impl SexpReader {
         self.unget_stack.push(c);
     }
 
-    fn peek_char<T: Reader>(&mut self, reader: &mut BufferedReader<T>, skip_whitespace: bool) -> Option<char> {
+    fn peek_char<T: Read>(&mut self, reader: &mut BufReader<T>, skip_whitespace: bool) -> Option<char> {
         match self.get_char(reader, skip_whitespace) {
             Some(c) => {
                 self.unget_char(c);
@@ -296,8 +325,8 @@ mod tests {
         assert!(result.is_ok());
         let sexp = result.unwrap();
         match sexp {
-            Int(x) => assert_eq!(x, 42),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Int(x) => assert_eq!(x, 42),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         };
     }
     
@@ -308,8 +337,8 @@ mod tests {
         assert!(result.is_ok());
         let sexp = result.unwrap();
         match sexp {
-            Float(x) => assert_eq!(x, 9.8),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Float(x) => assert_eq!(x, 9.8),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         };
     }
 
@@ -320,8 +349,8 @@ mod tests {
         assert!(result.is_ok());
         let sexp = result.unwrap();
         match sexp {
-            Str(x) => assert_eq!(x, "hello world".to_string()),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Str(x) => assert_eq!(x, "hello world".to_string()),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         };
     }
 
@@ -332,8 +361,8 @@ mod tests {
         assert!(result.is_ok());
         let sexp = result.unwrap();
         match sexp {
-            Symbol(x) => assert_eq!(x, "hello".to_string()),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Symbol(x) => assert_eq!(x, "hello".to_string()),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         };
     }
 
@@ -341,15 +370,15 @@ mod tests {
     fn parses_lists() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("(1 2 3)");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Int(x), box Cons(box Int(y), box Cons(box Int(z), box Nil))) => {
+            Sexp::Cons(box Sexp::Int(x), box Sexp::Cons(box Sexp::Int(y), box Sexp::Cons(box Sexp::Int(z), box Sexp::Nil))) => {
                 assert_eq!(x, 1);
                 assert_eq!(y, 2);
                 assert_eq!(z, 3);
             },
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         };
     }
 
@@ -357,14 +386,14 @@ mod tests {
     fn parses_quotes() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("'42");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(s), box Int(i)) => {
+            Sexp::Cons(box Sexp::Symbol(s), box Sexp::Int(i)) => {
                 assert_eq!(s, "quote".to_string());
                 assert_eq!(i, 42);
             }
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         };
     }
 
@@ -372,16 +401,16 @@ mod tests {
     fn parses_quoted_lists() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("'(1 2 3)");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(s), box Cons(box Int(a), box Cons(box Int(b), box Cons(box Int(c), box Nil)))) => {
+            Sexp::Cons(box Sexp::Symbol(s), box Sexp::Cons(box Sexp::Int(a), box Sexp::Cons(box Sexp::Int(b), box Sexp::Cons(box Sexp::Int(c), box Sexp::Nil)))) => {
                 assert_eq!(s, "quote".to_string());
                 assert_eq!(a, 1);
                 assert_eq!(b, 2);
                 assert_eq!(c, 3);
             }
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         };
     }
 
@@ -390,14 +419,14 @@ mod tests {
     fn parses_improper_lists() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("(1 . 2)");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Int(a), box Int(b)) => {
+            Sexp::Cons(box Sexp::Int(a), box Sexp::Int(b)) => {
                 assert_eq!(a, 1);
                 assert_eq!(b, 2);
             },
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -405,11 +434,11 @@ mod tests {
     fn parses_ellipsis_as_symbol() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("...");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Symbol(s) => assert_eq!(s, "...".to_string()),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Symbol(s) => assert_eq!(s, "...".to_string()),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -417,11 +446,11 @@ mod tests {
     fn parses_boolean_true() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("#t");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Boolean(v) => assert!(v),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Boolean(v) => assert!(v),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -429,11 +458,11 @@ mod tests {
     fn parses_boolean_false() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("#f");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Boolean(v) => assert!(!v),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Boolean(v) => assert!(!v),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -441,11 +470,11 @@ mod tests {
     fn parses_empty_list() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("()");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Nil => (),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Nil => (),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -453,11 +482,11 @@ mod tests {
     fn parses_quoted_empty_list() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("'()");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(ref quote), box Nil) => assert_eq!(*quote, "quote".to_string()),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Cons(box Sexp::Symbol(ref quote), box Sexp::Nil) => assert_eq!(*quote, "quote".to_string()),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -465,11 +494,11 @@ mod tests {
     fn parses_quasiquote() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str("`5");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "quasiquote".to_string()),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Cons(box Sexp::Symbol(ref quote), box Sexp::Int(5)) => assert_eq!(*quote, "quasiquote".to_string()),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -477,11 +506,11 @@ mod tests {
     fn parses_unquote() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str(",5");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "unquote".to_string()),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Cons(box Sexp::Symbol(ref quote), box Sexp::Int(5)) => assert_eq!(*quote, "unquote".to_string()),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
 
@@ -489,11 +518,11 @@ mod tests {
     fn parses_unquote_splicing() {
         let mut reader = SexpReader::new();
         let result = reader.parse_str(",@5");
-        assert!(result.is_ok(), "parse failed: {}", result);
+        assert!(result.is_ok(), "parse failed: {:?}", result);
         let sexp = result.unwrap();
         match sexp {
-            Cons(box Symbol(ref quote), box Int(5)) => assert_eq!(*quote, "unquote-splicing".to_string()),
-            _ => panic!("Parsed incorrectly, got {}", sexp)
+            Sexp::Cons(box Sexp::Symbol(ref quote), box Sexp::Int(5)) => assert_eq!(*quote, "unquote-splicing".to_string()),
+            _ => panic!("Parsed incorrectly, got {:?}", sexp)
         }
     }
     
@@ -504,12 +533,12 @@ mod tests {
         let sexp = result.unwrap();
         assert_eq!(sexp.len(), 2);
         match sexp[0] {
-            Cons(box Symbol(ref s), box Nil) => assert_eq!(*s, "hello".to_string()),
-            ref s => panic!("Parsed incorrectly, got {}", s)
+            Sexp::Cons(box Sexp::Symbol(ref s), box Sexp::Nil) => assert_eq!(*s, "hello".to_string()),
+            ref s => panic!("Parsed incorrectly, got {:?}", s)
         };
         match sexp[1] {
-            Cons(box Symbol(ref s), box Nil) => assert_eq!(*s, "world".to_string()),
-            ref s => panic!("Parsed incorrectly, got {}", s)
+            Sexp::Cons(box Sexp::Symbol(ref s), box Sexp::Nil) => assert_eq!(*s, "world".to_string()),
+            ref s => panic!("Parsed incorrectly, got {:?}", s)
         }
     }
 
@@ -520,12 +549,12 @@ mod tests {
         let sexp = result.unwrap();
         assert_eq!(sexp.len(), 2);
         match sexp[0] {
-            Nil => (),
-            ref s => panic!("Parsed incorrectly, got {}", s)
+            Sexp::Nil => (),
+            ref s => panic!("Parsed incorrectly, got {:?}", s)
         };
         match sexp[1] {
-            Nil => (),
-            ref s => panic!("Parsed incorrectly, got {}", s)
+            Sexp::Nil => (),
+            ref s => panic!("Parsed incorrectly, got {:?}", s)
         }
     }
 
@@ -536,18 +565,18 @@ mod tests {
         let sexp = result.unwrap();
         assert_eq!(sexp.len(), 2);
         match sexp[0] {
-            Cons(box Int(a), box Int(b)) => {
+            Sexp::Cons(box Sexp::Int(a), box Sexp::Int(b)) => {
                 assert_eq!(a, 1);
                 assert_eq!(b, 2);
             },
-            ref s => panic!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {:?}", s)
         };
         match sexp[1] {
-            Cons(box Int(a), box Int(b)) => {
+            Sexp::Cons(box Sexp::Int(a), box Sexp::Int(b)) => {
                 assert_eq!(a, 3);
                 assert_eq!(b, 4);
             },
-            ref s => panic!("Parsed incorrectly, got {}", s)
+            ref s => panic!("Parsed incorrectly, got {:?}", s)
         };
     }
 
