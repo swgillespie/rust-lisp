@@ -30,11 +30,20 @@ fn main() {
         print!("lisp> ");
         io::stdout().flush().ok().expect("Could not flush stdout"); // to print prompt before user input
         let mut input_line = String::new();
-        if let Ok(n) = stdin.read_line(&mut input_line) {
-            process_line(input_line, &mut interpreter);
-        } else {
-            println!("\nBye!");
-            break;
+        match stdin.read_line(&mut input_line) {
+            Ok(bytes_read) => {
+                if bytes_read > 0 {
+                    process_line(input_line, &mut interpreter);
+                } else { // EOF or ^D (Ctrl-D)
+                    println!("\nBye!");
+                    break;
+                }
+            }
+            Err(error) => {
+                println!("Error occured while reading: {}", error);
+                println!("Exiting.");
+                break;
+            }
         }
     }
 }
@@ -54,9 +63,3 @@ fn process_line(input: String, interpreter: &mut Interpreter) {
         Err(e) => println!("error: {}", e)
     };
 }
-
-
-
-
-
-
